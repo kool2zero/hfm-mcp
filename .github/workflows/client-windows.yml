@@ -67,6 +67,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item LICENSE, THIRD-PARTY-NOTICES.md mcp/build/exe/hfm-mcp/
           Compress-Archive -Path mcp/build/exe/hfm-mcp/* -DestinationPath "dist/hfm-mcp-client-$env:VERSION-windows-x64.zip"
 
       - name: install-client.ps1, Credential Manager and uninstall

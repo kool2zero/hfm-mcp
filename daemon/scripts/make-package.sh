@@ -19,6 +19,7 @@ cp "$daemon"/scripts/*.ps1 "$pkg/scripts/"
 cp "$daemon"/config/daemon.example.properties "$pkg/config/"
 cp -r "$daemon/src/oracle" "$pkg/src/"
 echo "$version" > "$pkg/VERSION"
+cp "$root/LICENSE" "$root/THIRD-PARTY-NOTICES.md" "$pkg/"
 
 mkdir -p "$root/dist"
 zip_name="hfm-mcp-server-$version.zip"
