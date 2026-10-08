@@ -227,36 +227,20 @@ Push a tag: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow:
    Administrators and the service account to read it, or set `HFM_DAEMON_API_KEY` as a
    machine-level environment variable.
 
-### First run against real HFM: checklist
+### Verified against HFM
 
 The Oracle backend follows the published 11.2 Javadoc (*Java API Reference for Oracle Hyperion
-Financial Management*):
+Financial Management*) and has been run against HFM 11.2.21: login, cells, members and custom
+dimensions, process status and actions, consolidation, copy, load and flat-file extract.
 - cells are read with `DataOM.getCellsDataAndStatus`, using `rawData`, `cellStatus` and `errorDetail`
 - dimensions come from `MetadataOM.getDimensions(ALL)` and are matched to POV prefixes by `shortName`
-- member lists come from `MetadataOM.getMembers` with the whole expression (`{Group.[Children]}`) as
-  `listName` and a `RecordSetRange` of 0..-1, the same pattern as existing HFM batch jobs;
-  `validateMembers` is the fallback
+- hierarchies come from `MetadataOM.getMembers` (`[Hierarchy]`, `RecordSetRange` 0..-1); HFM
+  returns members parent-qualified (`PARENT.CHILD`), which the daemon splits. A member's
+  children, descendants, base, parents and ancestors are worked out from that hierarchy, because
+  HFM ignores the member in a list such as `{Group.[Children]}`
+- an Extended Analytics extract needs every dimension in its slice; the preview fills omitted
+  ones from the default POV and shows the complete slice
 - errors are classified by `ErrorCodeConsts` and `HResultConsts`
-
-It compiles against those signatures but has not yet run on a live server. Confirm:
-
-- [ ] **Classpath.** The daemon starts and a login succeeds.
-- [ ] **Cells.** `hfm_get_data` returns values and statuses matching a data form for the same POV.
-- [ ] **Members.** `hfm_get_members` with `relation=children` and `hfm_search_members` work.
-      The daemon log shows at FINE level if `getMembers` was rejected and the fallback was used.
-- [ ] **Custom dimensions.** `hfm_get_dimensions` shows your custom dimension names.
-- [ ] **Process status.** `hfm_get_process_status` matches Process Control for a few units. Units
-      are sent as `S#.Y#.P#.V#.E#`; if HFM wants another form, the daemon log shows its error.
-- [ ] **Actions** (if enabled). On a test scenario, preview and execute a START, then a
-      CONSOLIDATE, and check them in HFM and in the audit log.
-- [ ] **Custom dimensions in member queries.** If your custom dimensions have their own names,
-      member lists should still work; the daemon retries a custom dimension as `CustomN` (as
-      existing batch jobs query them) when its own name finds nothing.
-- [ ] **Load** (if allowed). `scan_only` a known file and compare HFM's log with a load you ran before.
-- [ ] **Extract / copy** (if allowed). Run a small FLATFILE extract and compare it with your
-      output of an extract you already run. Copy a small slice between test scenarios.
-- [ ] **Session timeout.** Leave the daemon idle past HFM's session timeout, then call a tool.
-      It should recover transparently.
 
 `debug.includeRaw=true` adds every raw HFM field to responses, if something looks off.
 
@@ -396,4 +380,6 @@ Errors are returned as `{"error": {"code", "message"}}`. The codes include `auth
 ## License
 
 Public domain ([The Unlicense](LICENSE)): use, change and redistribute it freely, no conditions.
+Release files include third-party components under their own permissive licenses; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 Oracle, Hyperion and HFM are trademarks of Oracle; this project is not affiliated with Oracle.
