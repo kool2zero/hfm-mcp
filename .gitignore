@@ -1,0 +1,22 @@
+# Java
+daemon/target/
+daemon/config/daemon.properties
+*.p12
+*.jks
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+mcp/dist/
+
+.env
+
+# WinSW service files generated on the server
+daemon/service/
+daemon/logs/
+dist/
+build/
+mcp/build-exe.log

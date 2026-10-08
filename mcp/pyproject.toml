@@ -1,0 +1,32 @@
+[project]
+name = "hfm-mcp"
+dynamic = ["version"]
+description = "MCP server for Oracle Hyperion Financial Management (HFM), backed by the HFM daemon"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.3,<3",
+    "httpx>=0.28,<1",
+    "keyring>=25",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+exe = ["pyinstaller>=6.10"]
+
+[project.scripts]
+hfm-mcp = "hfm_mcp.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/hfm_mcp/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hfm_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

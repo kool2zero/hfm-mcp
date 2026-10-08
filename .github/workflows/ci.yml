@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 17 builds with --release 8, so the daemon is checked against the Java 8 API EPM runs on.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: ./.github/scripts/check-powershell.ps1
+
+      - name: Daemon build and tests (mock backend)
+        working-directory: daemon
+        run: mvn -B package
+
+      - name: Prebuilt Oracle backend (compiled against the API stubs, with its API manifest)
+        working-directory: daemon
+        run: scripts/build-oracle-prebuilt.sh
+
+      - name: MCP server tests (including end-to-end over stdio against the daemon)
+        working-directory: mcp
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -q -e ".[dev]"
+          .venv/bin/pytest -q

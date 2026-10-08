@@ -1,0 +1,2 @@
+package oracle.epm.fm.common.datatype.transport;
+public class PMTaskOptions implements org.apache.thrift.TBase<PMTaskOptions, Object> { public PMTaskOptions setPromotionLevel(int i){return this;} public PMTaskOptions setSelectedPhases(java.util.List<Integer> l){return this;} public PMTaskOptions setIncludeDescendants(boolean b){return this;} public PMTaskOptions setComments(String c){return this;} }

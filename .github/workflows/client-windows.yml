@@ -1,0 +1,144 @@
+name: Windows client
+
+# Builds hfm-mcp.exe and tests it on Windows: the end-to-end MCP tests run against the exe, the
+# password goes through the real Windows Credential Manager, and install-client.ps1 installs and
+# uninstalls it. Runs on PRs that touch the client, and from the release workflow.
+on:
+  pull_request:
+    paths:
+      - "mcp/**"
+      - "install-client.ps1"
+      - ".github/workflows/client-windows.yml"
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        shell: bash
+        run: |
+          v="${{ inputs.version }}"
+          v="${v#v}"
+          echo "VERSION=${v:-0.0.0-dev}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Daemon jar (for the end-to-end tests)
+        working-directory: daemon
+        run: mvn -B -q package -DskipTests
+
+      - name: Build hfm-mcp.exe
+        working-directory: mcp
+        shell: bash
+        run: |
+          sed -i "s/^__version__ = .*/__version__ = \"$VERSION\"/" src/hfm_mcp/__init__.py
+          python -m venv .venv
+          .venv/Scripts/python -m pip install -q -e ".[dev,exe]"
+          source .venv/Scripts/activate
+          packaging/build-exe.sh
+          build/exe/hfm-mcp/hfm-mcp.exe --version
+
+      - name: End-to-end tests against hfm-mcp.exe
+        working-directory: mcp
+        shell: bash
+        run: HFM_MCP_TEST_COMMAND="$(pwd -W)/build/exe/hfm-mcp/hfm-mcp.exe" .venv/Scripts/python -m pytest -q tests/test_end_to_end.py
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path mcp/build/exe/hfm-mcp/* -DestinationPath "dist/hfm-mcp-client-$env:VERSION-windows-x64.zip"
+
+      - name: install-client.ps1, Credential Manager and uninstall
+        shell: powershell   # Windows PowerShell 5.1, what users have
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $daemon = Start-Process java -ArgumentList '-jar', 'daemon/target/hfm-daemon.jar', 'daemon/config/daemon.mock.properties' -PassThru -NoNewWindow
+          try {
+            Start-Sleep -Seconds 5
+            $env:HFM_MCP_UNATTENDED = '1'
+            $env:HFM_DAEMON_URL = 'http://127.0.0.1:8765'
+            $env:HFM_DAEMON_API_KEY = 'dev-only-api-key-change-me'
+            $env:HFM_USERNAME = 'ci-user'
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -Package "dist\hfm-mcp-client-$env:VERSION-windows-x64.zip"
+            if ($LASTEXITCODE -ne 0) { throw 'install-client.ps1 failed' }
+            $exe = Join-Path $env:LOCALAPPDATA 'hfm-mcp\app\hfm-mcp.exe'
+            if (-not (Test-Path $exe)) { throw "not installed: $exe" }
+            if (([Environment]::GetEnvironmentVariable('Path', 'User')) -notlike '*hfm-mcp\app*') { throw 'not on PATH' }
+            'password' | & $exe login --password-stdin
+            if ($LASTEXITCODE -ne 0) { throw 'login failed' }
+            & $exe check          # password now comes from Windows Credential Manager
+            if ($LASTEXITCODE -ne 0) { throw 'check with stored password failed' }
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -Uninstall
+            if ($LASTEXITCODE -ne 0) { throw 'uninstall failed' }
+            if (Test-Path $exe) { throw 'uninstall left the exe' }
+          } finally {
+            Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Self-signed certificate for an HTTPS daemon
+        shell: bash
+        run: |
+          T=$(cygpath -m "$RUNNER_TEMP")
+          keytool -genkeypair -alias hfm -keyalg RSA -keysize 2048 -validity 2 -dname CN=localhost \
+            -ext SAN=dns:localhost,ip:127.0.0.1 -storetype PKCS12 -keystore "$T/ci.p12" \
+            -storepass changeit -keypass changeit
+          keytool -exportcert -rfc -alias hfm -keystore "$T/ci.p12" -storepass changeit -file "$T/ci.pem"
+          sed 's/^server.port=.*/server.port=8766/' daemon/config/daemon.mock.properties > "$T/daemon.tls.properties"
+          printf 'server.tls.keystore=%s\nserver.tls.keystorePassword=changeit\n' "$T/ci.p12" >> "$T/daemon.tls.properties"
+
+      - name: install-client.ps1 twice in one session over HTTPS
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $props = Join-Path $env:RUNNER_TEMP 'daemon.tls.properties'
+          $daemon = Start-Process java -ArgumentList '-jar', 'daemon/target/hfm-daemon.jar', $props -PassThru -NoNewWindow
+          try {
+            Start-Sleep -Seconds 5
+            $env:HFM_MCP_UNATTENDED = '1'
+            $env:HFM_DAEMON_URL = 'https://127.0.0.1:8766'
+            $env:HFM_DAEMON_API_KEY = 'dev-only-api-key-change-me'
+            $env:HFM_USERNAME = 'ci-user'
+            $env:HFM_CA_BUNDLE = Join-Path $env:RUNNER_TEMP 'ci.pem'
+            $package = "dist\hfm-mcp-client-$env:VERSION-windows-x64.zip"
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -Package $package
+            if ($LASTEXITCODE -ne 0) { throw 'first install failed' }
+            # irm | iex leaves the first run's variables in the session, HFM_CA_BUNDLE pointing at
+            # the installed copy; a second run must re-check the server, not copy the file onto itself.
+            $env:HFM_CA_BUNDLE = Join-Path $env:LOCALAPPDATA 'hfm-mcp\hfm-daemon-ca.pem'
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -Package $package
+            if ($LASTEXITCODE -ne 0) { throw 're-install with the saved certificate failed' }
+            $exe = Join-Path $env:LOCALAPPDATA 'hfm-mcp\app\hfm-mcp.exe'
+            'password' | & $exe login --password-stdin
+            if ($LASTEXITCODE -ne 0) { throw 'login over HTTPS failed' }
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -Uninstall
+            if ($LASTEXITCODE -ne 0) { throw 'uninstall failed' }
+          } finally {
+            Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-package
+          path: dist/hfm-mcp-client-*-windows-x64.zip
+          if-no-files-found: error
