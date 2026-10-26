@@ -496,6 +496,10 @@ function Install-HfmMcpServer {
                     $text = Set-PropertyText $text 'extract.defaultDsn' (Read-Value 'Default DSN for database extracts (blank = none)' '')
                 }
                 if (Read-YesNo 'Allow data copies (COPY_DATA)?' $false) { $allowed.Add('COPY_DATA') }
+                if (Read-YesNo 'Allow journal create / submit / approve / reject (JOURNAL_SAVE, _DELETE, _SUBMIT, _UNSUBMIT, _APPROVE, _REJECT)?' $false) {
+                    $allowed.AddRange([string[]]@('JOURNAL_SAVE', 'JOURNAL_DELETE', 'JOURNAL_SUBMIT', 'JOURNAL_UNSUBMIT', 'JOURNAL_APPROVE', 'JOURNAL_REJECT'))
+                }
+                if (Read-YesNo 'Allow posting and unposting journals (JOURNAL_POST, JOURNAL_UNPOST)?' $false) { $allowed.AddRange([string[]]@('JOURNAL_POST', 'JOURNAL_UNPOST')) }
                 if (Read-YesNo 'Allow data file loads (LOAD_DATA)?' $false) {
                     $allowed.Add('LOAD_DATA')
                     $loadDir = Read-Value 'Folder load files must be in' (Join-Path $dir 'loads') -Required

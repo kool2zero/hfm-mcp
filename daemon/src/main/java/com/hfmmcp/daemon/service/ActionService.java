@@ -56,12 +56,19 @@ public final class ActionService {
     private final DaemonConfig config;
     private final AuditLog audit;
     private final SecureRandom random = new SecureRandom();
+    private final JournalService journals;
+
+    /** Journal plans share the plan store and the execute call; execute routes them to this service. */
+    public JournalService journals() {
+        return journals;
+    }
 
     public ActionService(HfmBackend backend, HfmService hfm, DaemonConfig config, AuditLog audit) {
         this.backend = backend;
         this.hfm = hfm;
         this.config = config;
         this.audit = audit;
+        this.journals = new JournalService(backend, hfm, config, audit);
     }
 
     // ---------------------------------------------------------------- status (read-only)
@@ -204,6 +211,9 @@ public final class ActionService {
     public Map<String, Object> execute(UserSession s, String planId) {
         requireEnabled();
         Object o = planId == null ? null : s.actionPlans().remove(planId);
+        if (JournalService.owns(o)) {
+            return journals.execute(s, o);
+        }
         if (!(o instanceof Plan) || expired((Plan) o)) {
             throw new ApiException(404, "plan_not_found",
                     "No such plan (plans are single-use and expire after " + config.actionPlanTtlMinutes()

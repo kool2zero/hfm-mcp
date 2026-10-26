@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hfmmcp.daemon.DaemonConfig;
 import com.hfmmcp.daemon.backend.CopyRequest;
 import com.hfmmcp.daemon.backend.ExtractRequest;
+import com.hfmmcp.daemon.backend.JournalQuery;
 import com.hfmmcp.daemon.backend.LoadRequest;
 import com.hfmmcp.daemon.service.ActionService;
 import com.hfmmcp.daemon.service.HfmService;
+import com.hfmmcp.daemon.service.JournalService;
 import com.hfmmcp.daemon.session.SessionManager;
 import com.hfmmcp.daemon.session.UserSession;
 import com.sun.net.httpserver.HttpExchange;
@@ -235,6 +237,26 @@ public final class ApiServer {
                         b.path("accumulateWithinFile").asBoolean(false), b.path("containsOwnershipData").asBoolean(false),
                         b.path("scanOnly").asBoolean(false)));
             }
+            case "POST /api/v1/journals/list": {
+                JsonNode b = readBody(ex);
+                return actions.journals().list(s, map(b, "pov"), new JournalQuery(list(b, "statuses", STRING_LIST),
+                        list(b, "types", STRING_LIST), text(b, "label"), text(b, "group"), text(b, "entity"),
+                        text(b, "description")));
+            }
+            case "POST /api/v1/journals/get": {
+                JsonNode b = readBody(ex);
+                return actions.journals().get(s, map(b, "pov"), text(b, "label"));
+            }
+            case "POST /api/v1/journals/preview-save": {
+                JsonNode b = readBody(ex);
+                return actions.journals().previewSave(s, map(b, "pov"), text(b, "label"), text(b, "description"),
+                        text(b, "group"), text(b, "type"), journalLines(b));
+            }
+            case "POST /api/v1/journals/preview-action": {
+                JsonNode b = readBody(ex);
+                return actions.journals().previewAction(s, text(b, "action"), map(b, "pov"),
+                        list(b, "labels", STRING_LIST));
+            }
             case "POST /api/v1/actions/execute":
                 return actions.execute(s, text(readBody(ex), "planId"));
             case "POST /api/v1/tasks/status":
@@ -286,6 +308,24 @@ public final class ApiServer {
             throw ApiException.badRequest("bad_request", "'" + value + "' is not one of "
                     + java.util.Arrays.toString(type.getEnumConstants()));
         }
+    }
+
+    private static List<JournalService.LineInput> journalLines(JsonNode b) {
+        if (!b.hasNonNull("lines")) {
+            return null;
+        }
+        if (!b.get("lines").isArray()) {
+            throw ApiException.badRequest("bad_request", "Field 'lines' must be a list.");
+        }
+        List<JournalService.LineInput> out = new java.util.ArrayList<>();
+        for (JsonNode l : b.get("lines")) {
+            if (!l.isObject()) {
+                throw ApiException.badRequest("bad_request", "Each line must be an object.");
+            }
+            out.add(new JournalService.LineInput(text(l, "side"), text(l, "amount"), text(l, "description"),
+                    map(l, "dimensions")));
+        }
+        return out;
     }
 
     private static Map<String, String> map(JsonNode b, String field) {

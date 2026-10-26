@@ -1,4 +1,5 @@
-"""The MCP tools. All read-only: they never change HFM data or run calculations."""
+"""The MCP tools. The default set is read-only; process control, consolidations, data movement and
+journal changes are only offered when actions are enabled, and always preview-then-confirm."""
 
 from __future__ import annotations
 
@@ -40,6 +41,11 @@ Reading results:
 - Value: <Entity Currency> is the entity's local currency; a currency code (e.g. USD) or
   <Parent Currency> gives translated amounts.
 
+Journals: hfm_list_journals lists the journals of a Scenario/Year/Period/Value (label, status, type,
+group, balance, who created or last acted) and hfm_get_journal reads one with its line items and
+debit/credit totals. Journal statuses are WORKING, SUBMITTED, APPROVED, REJECTED and POSTED; only a
+posted journal is in the reported numbers.
+
 Process control: hfm_get_process_status shows each process unit's (Scenario, Year, Period, Value,
 Entity) state per phase - Not Started, First Pass, Review Level n, Submitted, Approved, Published -
 and who acted last.
@@ -58,6 +64,12 @@ Data extracts (hfm_preview_extract), copies (hfm_preview_copy) and file loads (h
 preview → confirm → hfm_execute_action steps. Copies and loads change data; say so plainly,
 including the mode (MERGE / REPLACE / ACCUMULATE), when asking for confirmation. Suggest a
 scan_only load first for a file that has not been loaded before, and summarise the errors in its log.
+Journal changes (hfm_preview_journal_save to create or replace a working journal,
+hfm_preview_journal_action to submit / unsubmit / approve / reject / post / unpost / delete) use the
+same preview -> confirm -> hfm_execute_action steps. Show the journal's lines, balance and effect
+(a delete is permanent, a post changes reported numbers) and wait for an explicit yes. Never invent
+accounts, entities or amounts: take them from the user and check member names first. After a save,
+read the journal back with hfm_get_journal and tell the user what HFM stored.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -86,6 +98,10 @@ ACTIONS: dict[str, str] = {
 UNIT_POV = Field(description="Scenario, Year, Period and Value of the process units, e.g. "
                              "{'Scenario': 'Actual', 'Year': '2025', 'Period': 'Dec'}. Omitted ones use the "
                              "default POV; Value defaults to it too (usually <Entity Currency>).")
+JOURNAL_POV = Field(description="Scenario, Year, Period and Value of the journals, e.g. "
+                                "{'Scenario': 'Actual', 'Year': '2025', 'Period': 'Dec', 'Value': '<Entity Curr Adjs>'}. "
+                                "Omitted ones use the default POV.")
+JOURNAL_ACTIONS = ("SUBMIT", "UNSUBMIT", "APPROVE", "REJECT", "POST", "UNPOST", "DELETE")
 ENTITIES = Field(description="Entities, or HFM member lists such as '{Group.[Base]}'. Omit for the default-POV entity.")
 PHASES = Field(description="Submission phases 1-9 (default [1]).")
 
@@ -206,6 +222,34 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         return await call(client.post, "/api/v1/process/status",
                           {"pov": pov or {}, "entities": entities or [], "phases": phases or []})
 
+    @server.tool(annotations=READ_ONLY)
+    async def hfm_list_journals(
+        pov: Annotated[dict[str, str] | None, JOURNAL_POV] = None,
+        status: Annotated[list[Literal["WORKING", "SUBMITTED", "APPROVED", "REJECTED", "POSTED"]] | None,
+                          Field(description="Only these statuses (default: all)")] = None,
+        type: Annotated[list[Literal["REGULAR", "AUTOREVERSING", "AUTOREVERSAL"]] | None,
+                        Field(description="Only these journal types (default: all)")] = None,
+        label: Annotated[str | None, Field(description="Journal label filter")] = None,
+        group: Annotated[str | None, Field(description="Journal group filter")] = None,
+        entity: Annotated[str | None, Field(description="Entity filter")] = None,
+        description: Annotated[str | None, Field(description="Description filter")] = None,
+    ) -> dict[str, Any]:
+        """List the journals of one Scenario/Year/Period/Value, with status, type, group, balance and
+        who created, last acted on and approved each. `byStatus` counts them per status, e.g. to answer
+        "which journals are still waiting for approval". Read a journal's lines with hfm_get_journal."""
+        body = {"pov": pov or {}, "statuses": status or [], "types": type or [], "label": label,
+                "group": group, "entity": entity, "description": description}
+        return await call(client.post, "/api/v1/journals/list", body)
+
+    @server.tool(annotations=READ_ONLY)
+    async def hfm_get_journal(
+        label: Annotated[str, Field(description="Exact journal label")],
+        pov: Annotated[dict[str, str] | None, JOURNAL_POV] = None,
+    ) -> dict[str, Any]:
+        """Read one journal: its status, type, group and description, every line item (side, amount,
+        entity, account, ICP and custom members) and the total debits and credits."""
+        return await call(client.post, "/api/v1/journals/get", {"pov": pov or {}, "label": label})
+
     if not enable_actions:
         return server
 
@@ -305,6 +349,45 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
                 "accumulateWithinFile": accumulate_within_file, "containsOwnershipData": contains_ownership_data}
         return await call(client.post, "/api/v1/actions/preview-load", body)
 
+    @server.tool(annotations=PREVIEW)
+    async def hfm_preview_journal_save(
+        label: Annotated[str, Field(description="Journal label. An existing WORKING or REJECTED journal with this "
+                                                "label is replaced; other statuses cannot be edited.")],
+        lines: Annotated[list[dict[str, Any]], Field(
+            description="Line items, each {'side': 'DEBIT'|'CREDIT', 'amount': '250.00', 'dimensions': "
+                        "{'Entity': 'UK01', 'Account': 'Opex', 'ICP': '[ICP None]', ...}, 'description': '...'}. "
+                        "amount is zero or more; side gives the direction. dimensions need Entity and Account, "
+                        "plus ICP and custom members where the account requires them.")],
+        pov: Annotated[dict[str, str] | None, JOURNAL_POV] = None,
+        description: Annotated[str | None, Field(description="Journal description")] = None,
+        group: Annotated[str | None, Field(description="Journal group")] = None,
+        type: Annotated[Literal["REGULAR", "AUTOREVERSING"], Field(description="Journal type")] = "REGULAR",
+    ) -> dict[str, Any]:
+        """Prepare creating or replacing a WORKING journal WITHOUT saving it. HFM scans it first: if
+        the result has `scanErrors` there is no planId and nothing to confirm, so fix them and preview
+        again. Otherwise show the lines, `balanceByEntity` and `effect` to the user and get their explicit
+        confirmation before calling hfm_execute_action."""
+        body = {"pov": pov or {}, "label": label, "description": description, "group": group, "type": type,
+                "lines": lines}
+        return await call(client.post, "/api/v1/journals/preview-save", body)
+
+    journal_actions = [a for a in JOURNAL_ACTIONS if allowed("JOURNAL_" + a)]
+    journal_action_field = Field(..., description="One of: " + ", ".join(journal_actions) + ". DELETE is permanent; "
+                                 "POST puts the journal into the reported numbers.",
+                                 json_schema_extra={"enum": journal_actions})
+
+    @server.tool(annotations=PREVIEW)
+    async def hfm_preview_journal_action(
+        labels: Annotated[list[str], Field(description="Exact labels of the journals to act on")],
+        action: str = journal_action_field,
+        pov: Annotated[dict[str, str] | None, JOURNAL_POV] = None,
+    ) -> dict[str, Any]:
+        """Prepare a journal workflow step (submit, unsubmit, approve, reject, post, unpost, delete) WITHOUT
+        running it: lists each journal with its current status and returns a single-use `planId`. Show it to
+        the user and get their explicit confirmation before calling hfm_execute_action."""
+        return await call(client.post, "/api/v1/journals/preview-action",
+                          {"action": action, "pov": pov or {}, "labels": labels})
+
     @server.tool(annotations=EXECUTE)
     async def hfm_execute_action(
         plan_id: Annotated[str, Field(description="planId from hfm_preview_action, after the user confirmed it")],
@@ -324,8 +407,15 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         return await call(client.post, "/api/v1/tasks/status", {"taskIds": task_ids})
 
     for tool, action in (("hfm_preview_action", None), ("hfm_preview_extract", "EXTRACT_DATA"),
-                         ("hfm_preview_copy", "COPY_DATA"), ("hfm_preview_load", "LOAD_DATA")):
-        if (not offered if action is None else not allowed(action)):
+                         ("hfm_preview_copy", "COPY_DATA"), ("hfm_preview_load", "LOAD_DATA"),
+                         ("hfm_preview_journal_save", "JOURNAL_SAVE"), ("hfm_preview_journal_action", "JOURNAL")):
+        if action is None:
+            missing = not offered
+        elif action == "JOURNAL":
+            missing = not journal_actions
+        else:
+            missing = not allowed(action)
+        if missing:
             server.remove_tool(tool)
     if allowed_actions is not None and not allowed_actions:
         server.remove_tool("hfm_execute_action")

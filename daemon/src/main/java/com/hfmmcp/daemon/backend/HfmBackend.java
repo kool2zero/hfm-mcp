@@ -82,4 +82,27 @@ public interface HfmBackend {
 
     /** Copies data between slices; synchronous. Returns HFM's log path for the copy (may be null). */
     String copyData(BackendSession session, CopyRequest request) throws BackendException;
+
+    // ---------------------------------------------------------------- journals
+
+    /** Lists the journals of one Scenario / Year / Period / Value, filtered by {@code query}. */
+    List<JournalInfo> listJournals(BackendSession session, String scenario, String year, String period,
+                                   String value, JournalQuery query) throws BackendException;
+
+    /** Reads one journal with its line items; throws BAD_REQUEST when there is no such label. */
+    JournalDetail getJournal(BackendSession session, String label, String scenario, String year, String period)
+            throws BackendException;
+
+    /** Validates a journal without saving it. Empty means HFM found nothing wrong. */
+    List<JournalError> scanJournal(BackendSession session, JournalDetail journal) throws BackendException;
+
+    /** Creates a journal, or replaces the one with the same label; returns its id. */
+    int saveJournal(BackendSession session, JournalDetail journal) throws BackendException;
+
+    /**
+     * Runs a workflow step on journals. Returns the labels HFM says it did not process (empty when
+     * all went through); throws when HFM refuses the call as a whole.
+     */
+    List<String> runJournalAction(BackendSession session, JournalAction action, List<String> labels,
+                                  String scenario, String year, String period) throws BackendException;
 }

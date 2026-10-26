@@ -10,6 +10,11 @@ import com.hfmmcp.daemon.backend.CopyRequest;
 import com.hfmmcp.daemon.backend.ExtractRequest;
 import com.hfmmcp.daemon.backend.DimensionInfo;
 import com.hfmmcp.daemon.backend.HfmBackend;
+import com.hfmmcp.daemon.backend.JournalAction;
+import com.hfmmcp.daemon.backend.JournalDetail;
+import com.hfmmcp.daemon.backend.JournalError;
+import com.hfmmcp.daemon.backend.JournalInfo;
+import com.hfmmcp.daemon.backend.JournalQuery;
 import com.hfmmcp.daemon.backend.LoadRequest;
 import com.hfmmcp.daemon.backend.MemberInfo;
 import com.hfmmcp.daemon.backend.ProcessAction;
@@ -64,6 +69,17 @@ import oracle.epm.fm.common.datatype.transport.WEBOMDATAGRIDTASKMASKENUM;
 import oracle.epm.fm.common.datatype.transport.RecordSetRange;
 import oracle.epm.fm.common.datatype.transport.SessionInfo;
 import oracle.epm.fm.common.exception.ErrorCodeConsts;
+import oracle.epm.fm.common.datatype.transport.DEBIT_CREDIT_UNIT;
+import oracle.epm.fm.common.datatype.transport.JOURNAL_ACTION;
+import oracle.epm.fm.common.datatype.transport.JOURNAL_STATUS;
+import oracle.epm.fm.common.datatype.transport.JOURNAL_TYPE;
+import oracle.epm.fm.common.datatype.transport.Journal;
+import oracle.epm.fm.common.datatype.transport.JournalDimension;
+import oracle.epm.fm.common.datatype.transport.JournalDisplayLine;
+import oracle.epm.fm.common.datatype.transport.JournalErrorDetail;
+import oracle.epm.fm.common.datatype.transport.JournalFilter;
+import oracle.epm.fm.common.datatype.transport.JournalLineItem;
+import oracle.epm.fm.domainobject.journal.JournalOM;
 import oracle.epm.fm.common.exception.HFMException;
 import oracle.epm.fm.common.exception.HResultConsts;
 import oracle.epm.fm.domainobject.administration.AdministrationOM;
@@ -807,6 +823,212 @@ public final class OracleHfmBackend implements HfmBackend {
         } catch (HFMException e) {
             throw classify(e, "copy " + r.source + " to " + r.target);
         }
+    }
+
+    // ---------------------------------------------------------------- journals
+
+    @Override
+    public List<JournalInfo> listJournals(BackendSession session, String scenario, String year, String period,
+                                          String value, JournalQuery q) throws BackendException {
+        SessionInfo info = info(session);
+        try {
+            JournalOM om = new JournalOM(info);
+            // Start from the system default filter: it also decides which columns HFM fills in.
+            JournalFilter system = withRetry(() -> om.getCurrentJournalFilter(true));
+            JournalFilter filter = system == null ? new JournalFilter() : system;
+            if (q.statuses != null && !q.statuses.isEmpty()) {
+                List<JOURNAL_STATUS> statuses = new ArrayList<>();
+                for (String s : q.statuses) {
+                    statuses.add(journalEnum(JOURNAL_STATUS.class, s));
+                }
+                filter.setJournalStatuses(statuses);
+            }
+            if (q.types != null && !q.types.isEmpty()) {
+                List<JOURNAL_TYPE> types = new ArrayList<>();
+                for (String t : q.types) {
+                    types.add(journalEnum(JOURNAL_TYPE.class, t));
+                }
+                filter.setJournalTypes(types);
+            }
+            if (notBlank(q.label)) {
+                filter.setLabelFilter(q.label.trim());
+            }
+            if (notBlank(q.group)) {
+                filter.setGroupFilter(q.group.trim());
+            }
+            if (notBlank(q.entity)) {
+                filter.setEntityFilter(q.entity.trim());
+            }
+            if (notBlank(q.description)) {
+                filter.setDescriptionFilter(q.description.trim());
+            }
+            final JournalFilter request = filter;
+            List<JournalDisplayLine> lines = withRetry(() -> om.enumJournals(scenario, year, period, value, request));
+            List<JournalInfo> out = new ArrayList<>();
+            if (lines != null) {
+                for (JournalDisplayLine l : lines) {
+                    out.add(new JournalInfo(l.getId(), l.getLabel(), l.getDescription(), l.getJournalGroup(),
+                            journalName(l.getStatus()), journalName(l.getJournalType()),
+                            journalName(l.getBalanceType()), l.getEntity(), l.getParent(), l.getValue(),
+                            l.getCreatedBy(), l.getCreatedOn(), l.getLastActedBy(), l.getLastActedOn(),
+                            l.getApprovedBy(), l.getApprovedOn()));
+                }
+            }
+            return out;
+        } catch (HFMException e) {
+            throw classify(e, "list journals for " + scenario + "/" + year + "/" + period);
+        }
+    }
+
+    @Override
+    public JournalDetail getJournal(BackendSession session, String label, String scenario, String year,
+                                    String period) throws BackendException {
+        SessionInfo info = info(session);
+        try {
+            JournalOM om = new JournalOM(info);
+            Journal j = withRetry(() -> om.getJournalByName(label, scenario, year, period));
+            if (j == null) {
+                throw new BackendException(Kind.BAD_REQUEST,
+                        "No journal '" + label + "' in " + scenario + "/" + year + "/" + period);
+            }
+            Map<String, String> pov = new LinkedHashMap<>();
+            if (j.getPov() != null) {
+                for (JournalDimension d : j.getPov()) {
+                    pov.put(d.getName(), d.getMember());
+                }
+            }
+            List<JournalDetail.Line> lines = new ArrayList<>();
+            if (j.getLineItems() != null) {
+                for (JournalLineItem l : j.getLineItems()) {
+                    Map<String, String> dims = new LinkedHashMap<>();
+                    if (l.getLineItemDimensions() != null) {
+                        for (JournalDimension d : l.getLineItemDimensions()) {
+                            dims.put(d.getName(), d.getMember());
+                        }
+                    }
+                    lines.add(new JournalDetail.Line(l.getIndex(), l.getDescription(), l.getAmount(),
+                            debitSide(l.getDebitUnit()), dims));
+                }
+            }
+            return new JournalDetail(j.getId(), j.getLabel(), j.getDescription(), j.getGroup(),
+                    journalName(j.getStatus()), journalName(j.getType()), journalName(j.getBalancedType()),
+                    j.getSingleEntity(), pov, lines);
+        } catch (HFMException e) {
+            throw classify(e, "read journal " + label);
+        }
+    }
+
+    @Override
+    public List<JournalError> scanJournal(BackendSession session, JournalDetail journal) throws BackendException {
+        SessionInfo info = info(session);
+        Journal request = toJournal(journal);
+        try {
+            JournalOM om = new JournalOM(info);
+            List<JournalErrorDetail> found = withRetry(() -> om.performScan(request));
+            List<JournalError> out = new ArrayList<>();
+            if (found != null) {
+                for (JournalErrorDetail d : found) {
+                    out.add(new JournalError(d.getLineNumber(), d.getValidationError()));
+                }
+            }
+            return out;
+        } catch (HFMException e) {
+            throw classify(e, "scan journal " + journal.label);
+        }
+    }
+
+    @Override
+    public int saveJournal(BackendSession session, JournalDetail journal) throws BackendException {
+        SessionInfo info = info(session);
+        Journal request = toJournal(journal);
+        try {
+            JournalOM om = new JournalOM(info);
+            return withRetry(() -> om.saveJournal(request));
+        } catch (HFMException e) {
+            BackendException be = classify(e, "save journal " + journal.label);
+            // A rejected save (bad member, wrong status) is the request's problem, not HFM's.
+            throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
+        }
+    }
+
+    @Override
+    public List<String> runJournalAction(BackendSession session, JournalAction action, List<String> labels,
+                                         String scenario, String year, String period) throws BackendException {
+        SessionInfo info = info(session);
+        JOURNAL_ACTION hfmAction = journalEnum(JOURNAL_ACTION.class, action.name());
+        List<String> request = new ArrayList<>(labels);
+        try {
+            JournalOM om = new JournalOM(info);
+            List<String> notDone = withRetry(() -> om.performJournalAction(request, scenario, year, period, hfmAction));
+            return notDone == null ? new ArrayList<String>() : new ArrayList<>(notDone);
+        } catch (HFMException e) {
+            BackendException be = classify(e, action + " journals");
+            throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
+        }
+    }
+
+    private static Journal toJournal(JournalDetail d) throws BackendException {
+        Journal j = new Journal();
+        j.setId(d.id);
+        j.setLabel(d.label);
+        if (d.id != 0) {
+            j.setOldlabel(d.label);
+        }
+        j.setDescription(d.description == null ? "" : d.description);
+        j.setGroup(d.group == null ? "" : d.group);
+        j.setType(journalEnum(JOURNAL_TYPE.class, d.type == null ? "REGULAR" : d.type));
+        j.setStatus(journalEnum(JOURNAL_STATUS.class, "WORKING"));
+        for (Map.Entry<String, String> e : d.pov.entrySet()) {
+            j.addToPov(new JournalDimension(e.getKey(), e.getValue(), ""));
+        }
+        for (JournalDetail.Line l : d.lines) {
+            JournalLineItem item = new JournalLineItem();
+            item.setIndex(l.index);
+            item.setDescription(l.description == null ? "" : l.description);
+            item.setAmount(l.amount);
+            item.setDebitUnit(debitUnit(l.side));
+            for (Map.Entry<String, String> e : l.dimensions.entrySet()) {
+                item.addToLineItemDimensions(new JournalDimension(e.getKey(), e.getValue(), ""));
+            }
+            j.addToLineItems(item);
+        }
+        return j;
+    }
+
+    private static boolean notBlank(String v) {
+        return v != null && !v.trim().isEmpty();
+    }
+
+    /** HFM names its enum constants with a prefix ({@code JSF_WORKING}, {@code JBA_POST}); the API uses the rest. */
+    private static String journalName(Enum<?> e) {
+        if (e == null) {
+            return null;
+        }
+        String n = e.name();
+        int i = n.indexOf('_');
+        return i < 0 ? n : n.substring(i + 1);
+    }
+
+    private static <E extends Enum<E>> E journalEnum(Class<E> type, String name) throws BackendException {
+        for (E e : type.getEnumConstants()) {
+            if (name.equalsIgnoreCase(journalName(e))) {
+                return e;
+            }
+        }
+        throw new BackendException(Kind.BAD_REQUEST, "'" + name + "' is not a valid " + type.getSimpleName());
+    }
+
+    private static String debitSide(DEBIT_CREDIT_UNIT unit) {
+        return unit != null && unit.name().toUpperCase(java.util.Locale.ROOT).contains("DEBIT") ? "DEBIT" : "CREDIT";
+    }
+
+    private static DEBIT_CREDIT_UNIT debitUnit(String side) throws BackendException {
+        for (DEBIT_CREDIT_UNIT u : DEBIT_CREDIT_UNIT.values()) {
+            if (side.equals(debitSide(u))) {
+                return u;
+            }
+        }
+        throw new BackendException(Kind.BAD_REQUEST, "side must be DEBIT or CREDIT");
     }
 
     // ---------------------------------------------------------------- helpers

@@ -401,6 +401,138 @@ class ApiServerTest {
         assertEquals(404, r.status);
     }
 
+    // ---------------------------------------------------------------- journals
+
+    private static final String DEC = "\"pov\":{\"Scenario\":\"Actual\",\"Year\":\"2025\",\"Period\":\"Dec\"}";
+
+    private static String saveBody(String label, String account) {
+        return "{" + DEC + ",\"label\":\"" + label + "\",\"description\":\"test\",\"group\":\"Tests\",\"lines\":["
+                + "{\"side\":\"debit\",\"amount\":\"100\",\"dimensions\":{\"Entity\":\"US01\",\"Account\":\"" + account + "\"}},"
+                + "{\"side\":\"CREDIT\",\"amount\":100,\"dimensions\":{\"E\":\"US01\",\"A\":\"Sales\"}}]}";
+    }
+
+    @Test
+    void journalsAreListedAndReadWithoutActions() throws IOException {
+        props.setProperty("actions.enabled", "false");
+        String sid = login("jdoe", "password");
+        JsonNode list = ok(call("POST", "/api/v1/journals/list", "{" + DEC + "}", KEY, sid));
+        assertEquals(2, list.get("count").asInt());
+        assertEquals(1, list.at("/byStatus/WORKING").asInt());
+        assertEquals(1, list.at("/byStatus/SUBMITTED").asInt());
+        assertEquals("<Entity Currency>", list.at("/pov/Value").asText());
+
+        JsonNode working = ok(call("POST", "/api/v1/journals/list", "{" + DEC + ",\"statuses\":[\"working\"]}", KEY, sid));
+        assertEquals(1, working.get("count").asInt());
+        assertEquals("ADJ001", working.at("/journals/0/label").asText());
+        assertEquals("bad_request", call("POST", "/api/v1/journals/list", "{" + DEC + ",\"statuses\":[\"nope\"]}",
+                KEY, sid).body.at("/error/code").asText());
+
+        JsonNode j = ok(call("POST", "/api/v1/journals/get", "{" + DEC + ",\"label\":\"adj001\"}", KEY, sid));
+        assertEquals("WORKING", j.get("status").asText());
+        assertEquals(2, j.get("lines").size());
+        assertEquals("DEBIT", j.at("/lines/0/side").asText());
+        assertEquals("Opex", j.at("/lines/0/dimensions/Account").asText());
+        assertEquals("250", j.get("totalDebits").asText());
+        assertEquals("250", j.get("totalCredits").asText());
+        assertEquals(400, call("POST", "/api/v1/journals/get", "{" + DEC + ",\"label\":\"NOPE\"}", KEY, sid).status);
+    }
+
+    @Test
+    void journalWritesAreOffUnlessAllowed() throws IOException {
+        String sid = login("jdoe", "password");
+        Response r = call("POST", "/api/v1/journals/preview-save", saveBody("NEW1", "Opex"), KEY, sid);
+        assertEquals(403, r.status);
+        assertEquals("action_not_allowed", r.body.at("/error/code").asText());
+        r = call("POST", "/api/v1/journals/preview-action", "{" + DEC + ",\"action\":\"DELETE\",\"labels\":[\"ADJ001\"]}", KEY, sid);
+        assertEquals("action_not_allowed", r.body.at("/error/code").asText());
+        // Reading is unaffected
+        ok(call("POST", "/api/v1/journals/list", "{" + DEC + "}", KEY, sid));
+    }
+
+    @Test
+    void journalIsSavedThenMovedThroughItsWorkflow() throws IOException {
+        props.setProperty("actions.allowed", "JOURNAL_SAVE,JOURNAL_SUBMIT,JOURNAL_APPROVE,JOURNAL_POST,JOURNAL_DELETE");
+        String sid = login("jdoe", "password");
+
+        JsonNode plan = ok(call("POST", "/api/v1/journals/preview-save", saveBody("NEW1", "Opex"), KEY, sid));
+        assertTrue(plan.get("balanced").asBoolean());
+        assertFalse(plan.get("replacesExisting").asBoolean());
+        assertEquals("100", plan.at("/lines/1/amount").asText());
+        assertEquals("US01", plan.at("/balanceByEntity/0/entity").asText());
+        // Nothing is saved until execute
+        assertEquals(400, call("POST", "/api/v1/journals/get", "{" + DEC + ",\"label\":\"NEW1\"}", KEY, sid).status);
+
+        JsonNode done = ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + plan.get("planId").asText() + "\"}", KEY, sid));
+        assertTrue(done.get("completed").asBoolean());
+        assertEquals(404, call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + plan.get("planId").asText() + "\"}",
+                KEY, sid).status, "plans are single-use");
+        JsonNode j = ok(call("POST", "/api/v1/journals/get", "{" + DEC + ",\"label\":\"NEW1\"}", KEY, sid));
+        assertEquals("WORKING", j.get("status").asText());
+        assertEquals("Tests", j.get("group").asText());
+
+        // Saving the same label replaces it
+        plan = ok(call("POST", "/api/v1/journals/preview-save", saveBody("NEW1", "COGS"), KEY, sid));
+        assertTrue(plan.get("replacesExisting").asBoolean());
+        ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + plan.get("planId").asText() + "\"}", KEY, sid));
+        assertEquals("COGS", ok(call("POST", "/api/v1/journals/get", "{" + DEC + ",\"label\":\"NEW1\"}", KEY, sid))
+                .at("/lines/0/dimensions/Account").asText());
+
+        // POST is not allowed here, SUBMIT then APPROVE are; HFM refuses POST of a journal that is not approved
+        assertEquals("action_not_allowed", call("POST", "/api/v1/journals/preview-action",
+                "{" + DEC + ",\"action\":\"UNPOST\",\"labels\":[\"NEW1\"]}", KEY, sid).body.at("/error/code").asText());
+        assertEquals(1, runJournalAction(sid, "SUBMIT", "NEW1").get("completed").asInt());
+        JsonNode early = runJournalAction(sid, "POST", "NEW1");
+        assertEquals(0, early.get("completed").asInt());
+        assertEquals("not processed", early.at("/results/0/outcome").asText());
+        assertEquals(1, runJournalAction(sid, "APPROVE", "NEW1").get("completed").asInt());
+        assertEquals(1, runJournalAction(sid, "POST", "NEW1").get("completed").asInt());
+        assertEquals("POSTED", ok(call("POST", "/api/v1/journals/get", "{" + DEC + ",\"label\":\"NEW1\"}", KEY, sid))
+                .get("status").asText());
+
+        // A posted journal cannot be edited or deleted
+        Response locked = call("POST", "/api/v1/journals/preview-save", saveBody("NEW1", "Opex"), KEY, sid);
+        assertEquals("journal_locked", locked.body.at("/error/code").asText());
+        assertEquals(0, runJournalAction(sid, "DELETE", "NEW1").get("completed").asInt());
+        assertEquals(1, runJournalAction(sid, "DELETE", "ADJ001").get("completed").asInt());
+        assertEquals(0, ok(call("POST", "/api/v1/journals/list", "{" + DEC + ",\"label\":\"ADJ001\"}", KEY, sid))
+                .get("count").asInt());
+    }
+
+    private JsonNode runJournalAction(String sid, String action, String label) throws IOException {
+        JsonNode plan = ok(call("POST", "/api/v1/journals/preview-action",
+                "{" + DEC + ",\"action\":\"" + action.toLowerCase() + "\",\"labels\":[\"" + label + "\"]}", KEY, sid));
+        assertEquals(label, plan.at("/targets/0/label").asText());
+        return ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + plan.get("planId").asText() + "\"}", KEY, sid));
+    }
+
+    @Test
+    void journalScanErrorsLeaveNothingToConfirm() throws IOException {
+        props.setProperty("actions.allowed", "JOURNAL_SAVE");
+        String sid = login("jdoe", "password");
+        JsonNode r = ok(call("POST", "/api/v1/journals/preview-save", saveBody("BAD1", "NoSuchAccount"), KEY, sid));
+        assertTrue(r.get("scanErrors").get(0).get("message").asText().contains("NoSuchAccount"));
+        assertFalse(r.has("planId"));
+
+        Response bad = call("POST", "/api/v1/journals/preview-save",
+                "{" + DEC + ",\"label\":\"X\",\"lines\":[{\"side\":\"UP\",\"amount\":\"1\",\"dimensions\":{}}]}", KEY, sid);
+        assertEquals("bad_line", bad.body.at("/error/code").asText());
+        bad = call("POST", "/api/v1/journals/preview-save",
+                "{" + DEC + ",\"label\":\"X\",\"lines\":[{\"side\":\"DEBIT\",\"amount\":\"-1\",\"dimensions\":{}}]}", KEY, sid);
+        assertEquals("bad_line", bad.body.at("/error/code").asText());
+    }
+
+    @Test
+    void journalActionsAreAuditedAndNeedExistingLabels() throws IOException {
+        props.setProperty("actions.allowed", "JOURNAL_SUBMIT");
+        String sid = login("jdoe", "password");
+        Response missing = call("POST", "/api/v1/journals/preview-action",
+                "{" + DEC + ",\"action\":\"SUBMIT\",\"labels\":[\"ADJ001\",\"GHOST\"]}", KEY, sid);
+        assertEquals("no_such_journal", missing.body.at("/error/code").asText());
+        assertEquals(1, runJournalAction(sid, "SUBMIT", "ADJ001").get("completed").asInt());
+        String log = new String(Files.readAllBytes(auditFile), StandardCharsets.UTF_8);
+        assertTrue(log.contains("JOURNAL_SUBMIT") && log.contains("ADJ001") && log.contains("jdoe"), log);
+    }
+
     // ---------------------------------------------------------------- extract and copy
 
     @Test
