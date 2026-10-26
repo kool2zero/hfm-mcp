@@ -1,0 +1,2 @@
+package oracle.epm.fm.common.datatype.transport;
+public class JournalFilter implements org.apache.thrift.TBase<JournalFilter, Object> { public JournalFilter(){} public JournalFilter setJournalStatuses(java.util.List<JOURNAL_STATUS> v){return this;} public JournalFilter setJournalTypes(java.util.List<JOURNAL_TYPE> v){return this;} public JournalFilter setLabelFilter(String v){return this;} public JournalFilter setGroupFilter(String v){return this;} public JournalFilter setEntityFilter(String v){return this;} public JournalFilter setDescriptionFilter(String v){return this;} }

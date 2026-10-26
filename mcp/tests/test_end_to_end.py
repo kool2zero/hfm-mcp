@@ -81,7 +81,15 @@ async def test_tools_over_stdio(daemon_url):
             await session.initialize()
             names = {t.name for t in (await session.list_tools()).tools}
             assert names == {"hfm_get_dimensions", "hfm_get_members", "hfm_search_members", "hfm_get_data",
-                             "hfm_get_process_status", "hfm_validate_pov"}, "action tools only appear with HFM_ENABLE_ACTIONS"
+                             "hfm_get_process_status", "hfm_validate_pov", "hfm_list_journals",
+                             "hfm_get_journal"}, "action tools only appear with HFM_ENABLE_ACTIONS"
+
+            journals = payload(await session.call_tool("hfm_list_journals", {
+                "pov": {"Scenario": "Actual", "Year": "2025", "Period": "Dec"}, "status": ["WORKING"]}))
+            assert [j["label"] for j in journals["journals"]] == ["ADJ001"]
+            journal = payload(await session.call_tool("hfm_get_journal", {
+                "label": "ADJ001", "pov": {"Scenario": "Actual", "Year": "2025", "Period": "Dec"}}))
+            assert journal["totalDebits"] == journal["totalCredits"] == "250"
 
             dims = payload(await session.call_tool("hfm_get_dimensions", {}))
             assert dims["user"] == "jdoe" and dims["application"] == "DEMO"
@@ -129,6 +137,8 @@ async def test_preview_then_execute_over_stdio(daemon_url):
             assert action["enum"] == ["START", "CONSOLIDATE"], action
             assert "APPROVE" not in action["description"]
             assert "action" in tools["hfm_preview_action"].input_schema["required"]
+            # The daemon's allowlist has no JOURNAL_* entries, so no journal change tool is offered.
+            assert not {"hfm_preview_journal_save", "hfm_preview_journal_action"} & tools.keys()
 
             pov = {"Scenario": "Actual", "Year": "2025", "Period": "Nov"}
             before = payload(await session.call_tool("hfm_get_process_status",

@@ -36,6 +36,8 @@ runtimes. Keeping HFM in a small JDK 8 daemon keeps it on a supported runtime.
 | `hfm_get_data` | Read cells: a fixed `pov` plus `vary` lists, cross-joined. Returns value, calc status (OK/CN/CH/TR/…) and flags. |
 | `hfm_get_process_status` | Process-control state per entity and phase (Not Started … Published), with the last action, user, time and comment. |
 | `hfm_validate_pov` | Check every member of an HFM POV string (`;` lists, `{Parent.[List]}`, `Parent.Child`), with reasons and "did you mean" suggestions. |
+| `hfm_list_journals` | Journals of a Scenario / Year / Period / Value, filtered by status, type, label, group or entity; counts per status. |
+| `hfm_get_journal` | One journal with its line items (side, amount, entity, account, ICP, customs) and debit / credit totals. |
 
 With actions enabled (see below), three more:
 
@@ -47,8 +49,17 @@ With actions enabled (see below), three more:
 | `hfm_preview_copy` | Prepare a data copy between slices (`ManageDataOM.copyData`; MERGE / REPLACE / ACCUMULATE). |
 | `hfm_preview_load` | Prepare loading a native-format data file from `load.allowedDir` (MERGE / ACCUMULATE / REPLACE / REPLACE_WITH_SECURITY), or a `scan_only` dry run. Returns HFM's load log. |
 | `hfm_get_task_status` | Progress of a consolidation or extract that was still running when `hfm_execute_action` returned. |
+| `hfm_preview_journal_save` | Prepare creating or replacing a WORKING journal. HFM scans it first; scan errors leave nothing to confirm. |
+| `hfm_preview_journal_action` | Prepare SUBMIT / UNSUBMIT / APPROVE / REJECT / POST / UNPOST / DELETE on journals, with each journal's current status. |
 
 Only `COPY_DATA` and `LOAD_DATA` write cell data, and both are off unless added to `actions.allowed`.
+
+Reading journals (`hfm_list_journals`, `hfm_get_journal`) needs no actions. Changing them does, and each step is its own
+`actions.allowed` entry, all off by default: `JOURNAL_SAVE`, `JOURNAL_DELETE`, `JOURNAL_SUBMIT`, `JOURNAL_UNSUBMIT`,
+`JOURNAL_APPROVE`, `JOURNAL_REJECT`, `JOURNAL_POST`, `JOURNAL_UNPOST`. They run in the user's HFM session, so HFM's own
+journal security and workflow rules apply: a journal HFM will not move is reported as **not processed**. A posted
+journal changes reported numbers, and a delete is permanent. Journals are not edited in place: a save replaces the lines
+of a WORKING or REJECTED journal with the same label. Journal templates are not supported.
 
 ## Actions (process control and consolidation)
 

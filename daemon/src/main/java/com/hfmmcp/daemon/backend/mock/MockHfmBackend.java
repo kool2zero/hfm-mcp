@@ -8,6 +8,11 @@ import com.hfmmcp.daemon.backend.CopyRequest;
 import com.hfmmcp.daemon.backend.ExtractRequest;
 import com.hfmmcp.daemon.backend.DimensionInfo;
 import com.hfmmcp.daemon.backend.HfmBackend;
+import com.hfmmcp.daemon.backend.JournalAction;
+import com.hfmmcp.daemon.backend.JournalDetail;
+import com.hfmmcp.daemon.backend.JournalError;
+import com.hfmmcp.daemon.backend.JournalInfo;
+import com.hfmmcp.daemon.backend.JournalQuery;
 import com.hfmmcp.daemon.backend.LoadRequest;
 import com.hfmmcp.daemon.backend.MemberInfo;
 import com.hfmmcp.daemon.backend.ProcessAction;
@@ -25,6 +30,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -90,6 +96,10 @@ public final class MockHfmBackend implements HfmBackend {
     /** "S|Y|P|W|E|A" → value loaded from a file. */
     private final Map<String, Double> loaded = new ConcurrentHashMap<>();
     private final Map<Integer, String> taskLogs = new ConcurrentHashMap<>();
+    /** Journals by Scenario|Year|Period|LABEL, and who last touched each. */
+    private final Map<String, JournalDetail> journals = new ConcurrentHashMap<>();
+    private final Map<String, String> journalOwners = new ConcurrentHashMap<>();
+    private final AtomicInteger nextJournalId = new AtomicInteger(1);
 
     public MockHfmBackend() {
         tree("Scenario", "", "Actual", "Budget");
@@ -115,6 +125,8 @@ public final class MockHfmBackend implements HfmBackend {
         tree("Flows", "", "[None]");
         tree("Custom3", "", "[None]");
         tree("Custom4", "", "[None]");
+        seedJournal("ADJ001", "Reclass UK opex", "Reclasses", "WORKING", "UK01", "Opex", "COGS", "250");
+        seedJournal("ADJ002", "US accrual", "Accruals", "SUBMITTED", "US01", "Opex", "Sales", "1000");
         descriptions.put("Group", "Consolidated group");
         descriptions.put("US", "United States");
         descriptions.put("US01", "US Operations East");
@@ -555,6 +567,192 @@ public final class MockHfmBackend implements HfmBackend {
 
     private static String slice(Map<String, String> p) {
         return p.get("S") + "|" + p.get("Y") + "|" + p.get("P");
+    }
+
+
+    // ---------------------------------------------------------------- journals
+
+    private void seedJournal(String label, String description, String group, String status, String entity,
+                             String debit, String credit, String amount) {
+        Map<String, String> pov = new LinkedHashMap<>();
+        pov.put("Scenario", "Actual");
+        pov.put("Year", "2025");
+        pov.put("Period", "Dec");
+        pov.put("Value", "<Entity Currency>");
+        List<JournalDetail.Line> lines = new ArrayList<>();
+        lines.add(new JournalDetail.Line(1, "", amount, "DEBIT", lineDims(entity, debit)));
+        lines.add(new JournalDetail.Line(2, "", amount, "CREDIT", lineDims(entity, credit)));
+        JournalDetail j = new JournalDetail(nextJournalId.getAndIncrement(), label, description, group, status,
+                "REGULAR", "BALANCED", entity, pov, lines);
+        journals.put(journalKey(pov, label), j);
+        journalOwners.put(journalKey(pov, label), "mock");
+    }
+
+    private static Map<String, String> lineDims(String entity, String account) {
+        Map<String, String> d = new LinkedHashMap<>();
+        d.put("Entity", entity);
+        d.put("Account", account);
+        d.put("ICP", "[ICP None]");
+        return d;
+    }
+
+    private static String journalKey(Map<String, String> pov, String label) {
+        return journalKey(pov.get("Scenario"), pov.get("Year"), pov.get("Period"), label);
+    }
+
+    private static String journalKey(String scenario, String year, String period, String label) {
+        return scenario + "|" + year + "|" + period + "|" + label.toUpperCase(Locale.ROOT);
+    }
+
+    @Override
+    public List<JournalInfo> listJournals(BackendSession session, String scenario, String year, String period,
+                                          String value, JournalQuery q) throws BackendException {
+        check(session);
+        String prefix = scenario + "|" + year + "|" + period + "|";
+        List<JournalInfo> out = new ArrayList<>();
+        for (Map.Entry<String, JournalDetail> e : journals.entrySet()) {
+            JournalDetail j = e.getValue();
+            if (!e.getKey().startsWith(prefix) || !j.pov.get("Value").equals(value)) {
+                continue;
+            }
+            if (q.statuses != null && !q.statuses.isEmpty() && !q.statuses.contains(j.status)) {
+                continue;
+            }
+            if (q.types != null && !q.types.isEmpty() && !q.types.contains(j.type)) {
+                continue;
+            }
+            if (!matches(j.label, q.label) || !matches(j.group, q.group) || !matches(j.singleEntity, q.entity)
+                    || !matches(j.description, q.description)) {
+                continue;
+            }
+            String who = journalOwners.get(e.getKey());
+            out.add(new JournalInfo(j.id, j.label, j.description, j.group, j.status, j.type, j.balanceType,
+                    j.singleEntity, parentOf("Entity", j.singleEntity), value, who, 0, who, 0, null, 0));
+        }
+        out.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
+        return out;
+    }
+
+    private static boolean matches(String actual, String wanted) {
+        return wanted == null || wanted.trim().isEmpty()
+                || (actual != null && actual.toLowerCase(Locale.ROOT).contains(wanted.trim().toLowerCase(Locale.ROOT)));
+    }
+
+    @Override
+    public JournalDetail getJournal(BackendSession session, String label, String scenario, String year,
+                                    String period) throws BackendException {
+        check(session);
+        JournalDetail j = journals.get(journalKey(scenario, year, period, label));
+        if (j == null) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "No journal '" + label + "' in " + scenario + "/" + year + "/" + period);
+        }
+        return j;
+    }
+
+    @Override
+    public List<JournalError> scanJournal(BackendSession session, JournalDetail j) throws BackendException {
+        check(session);
+        List<JournalError> errors = new ArrayList<>();
+        if (j.label == null || j.label.trim().isEmpty()) {
+            errors.add(new JournalError(0, "A journal needs a label"));
+        }
+        if (j.lines == null || j.lines.isEmpty()) {
+            errors.add(new JournalError(0, "A journal needs at least one line item"));
+            return errors;
+        }
+        for (JournalDetail.Line l : j.lines) {
+            BigDecimal amount;
+            try {
+                amount = new BigDecimal(l.amount);
+            } catch (RuntimeException e) {
+                errors.add(new JournalError(l.index, "Amount '" + l.amount + "' is not a number"));
+                continue;
+            }
+            for (String dim : new String[] {"Entity", "Account"}) {
+                String m = l.dimensions.get(dim);
+                if (m == null || parentOf(dim, m) == null) {
+                    errors.add(new JournalError(l.index, dim + " '" + m + "' is not a valid member"));
+                }
+            }
+        }
+        return errors;
+    }
+
+    @Override
+    public int saveJournal(BackendSession session, JournalDetail j) throws BackendException {
+        check(session);
+        for (String dim : new String[] {"Scenario", "Year", "Period", "Value"}) {
+            String m = j.pov.get(dim);
+            if (m == null) {
+                throw new BackendException(BackendException.Kind.BAD_REQUEST, "Journal POV needs " + dim);
+            }
+            requireMember(dim, m);
+        }
+        for (JournalError e : scanJournal(session, j)) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST, e.message);
+        }
+        // HFM saves an unbalanced journal as a working draft.
+        BigDecimal net = BigDecimal.ZERO;
+        for (JournalDetail.Line l : j.lines) {
+            net = net.add("DEBIT".equals(l.side) ? new BigDecimal(l.amount) : new BigDecimal(l.amount).negate());
+        }
+        boolean balanced = net.signum() == 0;
+        String key = journalKey(j.pov, j.label);
+        JournalDetail old = journals.get(key);
+        if (old != null && !"WORKING".equals(old.status) && !"REJECTED".equals(old.status)) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "Journal " + j.label + " is " + old.status + " and cannot be edited");
+        }
+        int id = old != null ? old.id : nextJournalId.getAndIncrement();
+        String entity = j.lines.get(0).dimensions.get("Entity");
+        journals.put(key, new JournalDetail(id, j.label, j.description, j.group, "WORKING",
+                j.type == null ? "REGULAR" : j.type, balanced ? "BALANCED" : "UNBALANCED", entity, j.pov, j.lines));
+        journalOwners.put(key, ((MockSession) session).user);
+        return id;
+    }
+
+    @Override
+    public List<String> runJournalAction(BackendSession session, JournalAction action, List<String> labels,
+                                         String scenario, String year, String period) throws BackendException {
+        check(session);
+        List<String> notDone = new ArrayList<>();
+        for (String label : labels) {
+            String key = journalKey(scenario, year, period, label);
+            JournalDetail j = journals.get(key);
+            String to = j == null ? null : journalTransition(action, j.status);
+            if (to == null) {
+                notDone.add(label);
+            } else if (action == JournalAction.DELETE) {
+                journals.remove(key);
+            } else {
+                journals.put(key, new JournalDetail(j.id, j.label, j.description, j.group, to, j.type,
+                        j.balanceType, j.singleEntity, j.pov, j.lines));
+                journalOwners.put(key, ((MockSession) session).user);
+            }
+        }
+        return notDone;
+    }
+
+    private static String journalTransition(JournalAction action, String from) {
+        switch (action) {
+            case SUBMIT:
+                return "WORKING".equals(from) || "REJECTED".equals(from) ? "SUBMITTED" : null;
+            case UNSUBMIT:
+                return "SUBMITTED".equals(from) ? "WORKING" : null;
+            case APPROVE:
+                return "SUBMITTED".equals(from) ? "APPROVED" : null;
+            case REJECT:
+                return "SUBMITTED".equals(from) || "APPROVED".equals(from) ? "REJECTED" : null;
+            case POST:
+                return "APPROVED".equals(from) ? "POSTED" : null;
+            case UNPOST:
+                return "POSTED".equals(from) ? "APPROVED" : null;
+            case DELETE:
+                return "WORKING".equals(from) || "REJECTED".equals(from) ? from : null;
+            default:
+                return null;
+        }
     }
 
     // ---------------------------------------------------------------- helpers
