@@ -914,7 +914,7 @@ public final class MockHfmBackend implements HfmBackend {
             Files.write(out, data);
             return out;
         } catch (IOException e) {
-            throw new BackendException(BackendException.Kind.UNAVAILABLE,
+            throw new BackendException(BackendException.Kind.HFM_ERROR,
                     "Could not write report file: " + e.getMessage(), e);
         }
     }

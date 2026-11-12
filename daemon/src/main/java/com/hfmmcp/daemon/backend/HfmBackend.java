@@ -128,7 +128,8 @@ public interface HfmBackend {
      * Downloads the rendered report file of a finished report task into {@code directory}
      * ({@code AdministrationOM.getRunningTaskFile}).
      */
-    Path fetchReportFile(BackendSession session, int taskId, Path directory, String fileName) throws BackendException;
+    java.nio.file.Path fetchReportFile(BackendSession session, int taskId, java.nio.file.Path directory, String fileName)
+            throws BackendException;
 
     /** Creates or replaces a report document in HFM Document Manager ({@code DocumentOM.saveDocumentContent}). */
     void saveReport(BackendSession session, ReportDetail report, boolean overwrite) throws BackendException;
