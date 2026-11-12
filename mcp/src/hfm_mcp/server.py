@@ -496,8 +496,12 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
                                                 "'format_segment': '27', 'keep_segment_ids': '52,7,57'}]. Writes a "
                                                 "SEGMENTSET and drops every segment not in keep_segment_ids. Optional: "
                                                 "'position' (default 0), 'axisId' (default Row=2, Column=1, "
-                                                "Column unverified). Formula row references are not renumbered; "
-                                                "check the preview warnings.")] = None,
+                                                "Column unverified). EXPERIMENTAL: row/column counts, "
+                                                "properties, styles, conditional formats and formula references "
+                                                "are not renumbered, so each item is refused unless it sets "
+                                                "'allow_unrenumbered': 'true'; do not save such a result. To roll "
+                                                "out a linked layout, use copy_from on a report Studio already "
+                                                "linked.")] = None,
         code: Annotated[str | None,
                         Field(description="Full report definition code/XML. Omit when updating an existing report or "
                                           "using `copy_from` with `replacements` or `sections`.")] = None,

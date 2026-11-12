@@ -1469,6 +1469,16 @@ public final class ReportService {
                 throw ApiException.badRequest("bad_request", "axisLinks[" + i + "] needs 'axis' and 'template'");
             }
             String axisName = axis.trim().toLowerCase(Locale.ROOT).startsWith("c") ? "Column" : "Row";
+            String ack = firstNonNullKey(l, "allow_unrenumbered", "allowUnrenumbered");
+            if (ack == null || !"true".equalsIgnoreCase(ack.trim())) {
+                throw ApiException.badRequest("bad_request",
+                        "axisLinks[" + i + "] would leave the report half-converted: this tool does not renumber "
+                                + "ROW_COUNT, row properties, styles, conditional formats or formula row references "
+                                + "([n]) after swapping segments for a template link, so they will not line up. "
+                                + "Clone a report that Studio already linked instead (copy_from). For experiments "
+                                + "only, set \"allow_unrenumbered\": \"true\" on the axisLinks item and do not save "
+                                + "the result.");
+            }
             String axisId = firstNonNullKey(l, "axisId");
             if (blank(axisId)) {
                 axisId = "Row".equals(axisName) ? "2" : "1";

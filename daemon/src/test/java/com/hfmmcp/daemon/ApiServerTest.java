@@ -736,12 +736,19 @@ class ApiServerTest {
         assertEquals("Account=Sales, COGS", gotCopy.at("/sections/Rows/Row 1").asText());
         assertTrue(gotCopy.at("/sections/Header/Text 1").asText().contains("DISTRIBUTION SCHEDULE TEST"));
 
+        // axisLinks is refused without an explicit acknowledgement
+        Response refused = call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"RFJUN_DC_NOACK\",\"copyFrom\":\"RFJUN_DC\","
+                        + "\"axisLinks\":[{\"axis\":\"Row\",\"template\":\"/Templates/RowTemplates/DC\"}]}", KEY, sid);
+        assertEquals(400, refused.status);
+        assertTrue(refused.body.toString().contains("allow_unrenumbered"));
+
         // Regex replacement and axis link
         JsonNode linkPlan = ok(call("POST", "/api/v1/reports/preview-save",
                 "{\"name\":\"RFJUN_DC_LINK\",\"copyFrom\":\"RFJUN_DC\","
                         + "\"replacements\":[{\"find\":\"DISTRIBUTION (SCHEDULE)\",\"replace\":\"DIST $1\",\"regex\":\"true\"}],"
                         + "\"axisLinks\":[{\"axis\":\"Row\",\"template\":\"/Templates/RowTemplates/DC\","
-                        + "\"format_segment\":\"3\"}]}", KEY, sid));
+                        + "\"format_segment\":\"3\",\"allow_unrenumbered\":\"true\"}]}", KEY, sid));
         assertEquals(1, linkPlan.get("replacementsApplied").asInt());
         assertTrue(linkPlan.get("warnings").toString().contains("/Templates/RowTemplates/DC"));
         ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + linkPlan.get("planId").asText() + "\"}", KEY, sid));
