@@ -286,6 +286,8 @@ public final class ApiServer {
                         ? convert(b.get("sections"), SECTIONS_MAP, "sections") : null;
                 List<Map<String, String>> replacements = b.hasNonNull("replacements")
                         ? convert(b.get("replacements"), REPLACEMENTS_LIST, "replacements") : null;
+                List<Map<String, String>> axisLinks = b.hasNonNull("axisLinks")
+                        ? convert(b.get("axisLinks"), REPLACEMENTS_LIST, "axisLinks") : null;
                 Boolean isPrivate = b.hasNonNull("private") ? b.get("private").asBoolean() : null;
                 String copyFrom = text(b, "copyFrom");
                 if (copyFrom == null) {
@@ -293,7 +295,7 @@ public final class ApiServer {
                 }
                 return actions.reports().previewSave(s, text(b, "name"), text(b, "reportType"), text(b, "folder"),
                         text(b, "code"), sections, text(b, "description"), text(b, "securityClass"), isPrivate,
-                        text(b, "fileType"), copyFrom, replacements);
+                        text(b, "fileType"), copyFrom, replacements, axisLinks);
             }
             case "POST /api/v1/reports/preview-delete": {
                 JsonNode b = readBody(ex);

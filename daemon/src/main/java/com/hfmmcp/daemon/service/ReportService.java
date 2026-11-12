@@ -213,14 +213,15 @@ public final class ReportService {
                                            String description, String securityClass, Boolean isPrivate,
                                            String fileType) {
         return previewSave(s, name, reportType, folder, code, sections, description, securityClass, isPrivate,
-                fileType, null, null);
+                fileType, null, null, null);
     }
 
     public Map<String, Object> previewSave(UserSession s, String name, String reportType, String folder,
                                            String code, Map<String, Map<String, String>> sections,
                                            String description, String securityClass, Boolean isPrivate,
                                            String fileType, String copyFrom,
-                                           List<Map<String, String>> replacements) {
+                                           List<Map<String, String>> replacements,
+                                           List<Map<String, String>> axisLinks) {
         requireAllowed(SAVE);
         if (blank(name)) {
             throw ApiException.badRequest("bad_request", "name is required");
@@ -311,6 +312,14 @@ public final class ReportService {
             replacementsApplied = rr.totalOccurrences;
         }
 
+        List<String> linkNotes = new ArrayList<>();
+        if (axisLinks != null && !axisLinks.isEmpty()) {
+            if (!isXmlReportCode(afterReplacements)) {
+                throw ApiException.badRequest("bad_request", "axisLinks only apply to Financial Reporting XML reports");
+            }
+            afterReplacements = applyAxisLinks(afterReplacements, axisLinks, linkNotes);
+        }
+
         String finalCode = sections != null && !sections.isEmpty()
                 ? applySections(afterReplacements, sections)
                 : afterReplacements;
@@ -321,6 +330,7 @@ public final class ReportService {
 
         Map<String, Map<String, String>> parsedSections = parseSections(finalCode);
         List<String> warnings = validateSectionPov(s, parsedSections, isXmlReportCode(finalCode));
+        warnings.addAll(linkNotes);
 
         ReportInfo info = new ReportInfo(trimmedName, effectiveType, effectiveFileType, effectiveFolder,
                 effectiveDesc, effectiveSec, effectivePriv, s.userName(), System.currentTimeMillis());
@@ -1383,6 +1393,36 @@ public final class ReportService {
             if (replace == null) {
                 replace = "";
             }
+            String regexFlag = firstNonNullKey(item, "regex", "isRegex");
+            if (regexFlag != null && "true".equalsIgnoreCase(regexFlag.trim())) {
+                java.util.regex.Pattern pat;
+                try {
+                    pat = java.util.regex.Pattern.compile(find,
+                            java.util.regex.Pattern.DOTALL | java.util.regex.Pattern.MULTILINE);
+                } catch (java.util.regex.PatternSyntaxException e) {
+                    throw ApiException.badRequest("bad_request",
+                            "replacements[" + i + "].find is not a valid regex: " + e.getDescription());
+                }
+                java.util.regex.Matcher m = pat.matcher(current);
+                int matches = 0;
+                while (m.find()) {
+                    matches++;
+                }
+                if (matches == 0) {
+                    String preview = find.length() > 120 ? find.substring(0, 120) + "..." : find;
+                    throw ApiException.badRequest("bad_request",
+                            "replacements[" + i + "].find regex matched nothing: " + preview);
+                }
+                try {
+                    current = pat.matcher(current).replaceAll(replace);
+                } catch (IllegalArgumentException | IndexOutOfBoundsException e) {
+                    throw ApiException.badRequest("bad_request",
+                            "replacements[" + i + "].replace is invalid (use $1 for groups, \\$ for a literal $): "
+                                    + e.getMessage());
+                }
+                total += matches;
+                continue;
+            }
             int count = countOccurrences(current, find);
             if (count > 0) {
                 current = current.replace(find, replace);
@@ -1412,6 +1452,85 @@ public final class ReportService {
                     "replacements[" + i + "].find was not found in report code: " + preview);
         }
         return new ReplacementResult(current, total);
+    }
+
+    /**
+     * Replaces the segments of a grid axis with a live link to a row/column template: writes a
+     * SEGMENTSET (OBJECT_LINKNAME) ahead of the axes and drops every segment except those listed in
+     * keep_segment_ids (comma-separated GRIDSEGMENT IDs; default none).
+     */
+    private static String applyAxisLinks(String xml, List<Map<String, String>> links, List<String> notes) {
+        String result = xml;
+        for (int i = 0; i < links.size(); i++) {
+            Map<String, String> l = links.get(i);
+            String axis = firstNonNullKey(l, "axis");
+            String template = firstNonNullKey(l, "template", "link", "objectLinkName");
+            if (blank(axis) || blank(template)) {
+                throw ApiException.badRequest("bad_request", "axisLinks[" + i + "] needs 'axis' and 'template'");
+            }
+            String axisName = axis.trim().toLowerCase(Locale.ROOT).startsWith("c") ? "Column" : "Row";
+            String axisId = firstNonNullKey(l, "axisId");
+            if (blank(axisId)) {
+                axisId = "Row".equals(axisName) ? "2" : "1";
+            }
+            String position = firstNonNullKey(l, "position");
+            String formatSegment = firstNonNullKey(l, "formatSegment", "format_segment");
+            Set<String> keep = new HashSet<>();
+            String keepRaw = firstNonNullKey(l, "keep_segment_ids", "keepSegmentIds");
+            if (!blank(keepRaw)) {
+                for (String k : keepRaw.split("[,;\\s]+")) {
+                    if (!k.isEmpty()) {
+                        keep.add(k);
+                    }
+                }
+            }
+            java.util.regex.Matcher am = java.util.regex.Pattern.compile(
+                    "(<GRIDAXIS\\b[^>]*\\bAXISNAME=\"" + axisName + "\"[^>]*>)(.*?)(</GRIDAXIS>)",
+                    java.util.regex.Pattern.DOTALL).matcher(result);
+            if (!am.find()) {
+                throw ApiException.badRequest("bad_request", "axisLinks[" + i + "]: no " + axisName + " axis in report");
+            }
+            String body = am.group(2);
+            java.util.regex.Matcher sm = java.util.regex.Pattern.compile(
+                    "<GRIDSEGMENT\\b([^>]*)(/>|>.*?</GRIDSEGMENT>)", java.util.regex.Pattern.DOTALL).matcher(body);
+            StringBuffer kept = new StringBuffer();
+            int removed = 0;
+            int kept_n = 0;
+            while (sm.find()) {
+                java.util.regex.Matcher idm = java.util.regex.Pattern.compile("\\bID=\"([^\"]+)\"").matcher(sm.group(1));
+                String id = idm.find() ? idm.group(1) : null;
+                if (id != null && keep.contains(id)) {
+                    sm.appendReplacement(kept, java.util.regex.Matcher.quoteReplacement(sm.group()));
+                    kept_n++;
+                } else {
+                    sm.appendReplacement(kept, "");
+                    removed++;
+                }
+            }
+            sm.appendTail(kept);
+            String newAxis = am.group(1) + kept + am.group(3);
+            result = result.substring(0, am.start()) + newAxis + result.substring(am.end());
+
+            StringBuilder tag = new StringBuilder("<SEGMENTSET AXIS=\"").append(axisId).append("\"");
+            tag.append(" FORMAT_PRECEDENCE=\"1\"");
+            if (!blank(formatSegment)) {
+                tag.append(" FORMAT_SEGMENT=\"").append(escapeHtml(formatSegment.trim())).append("\"");
+            }
+            tag.append(" FORMULA_PRECEDENCE=\"1\" OBJECT_LINKNAME=\"").append(escapeHtml(template.trim())).append("\"");
+            tag.append(" POSITION=\"").append(blank(position) ? "0" : escapeHtml(position.trim())).append("\"/>");
+            int closeIdx = result.indexOf("</SEGMENTSETS>");
+            if (closeIdx >= 0) {
+                result = result.substring(0, closeIdx) + tag + "\r\n" + result.substring(closeIdx);
+            } else {
+                int firstAxis = result.indexOf("<GRIDAXIS");
+                result = result.substring(0, firstAxis)
+                        + "<SEGMENTSETS>\r\n" + tag + "\r\n</SEGMENTSETS>\r\n" + result.substring(firstAxis);
+            }
+            notes.add(axisName + " axis now links to " + template.trim() + ": " + removed + " segment(s) removed, "
+                    + kept_n + " kept. Row/column-number references in formulas (e.g. [18]+[19]) and cell "
+                    + "formatting are NOT renumbered; check them in the preview.");
+        }
+        return result;
     }
 
     private static String firstNonNullKey(Map<String, String> map, String... keys) {

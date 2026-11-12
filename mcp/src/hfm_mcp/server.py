@@ -487,7 +487,17 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         replacements: Annotated[list[dict[str, str]] | None,
                                 Field(description="List of {'find': '...', 'replace': '...'} edits applied in order to "
                                                   "the report definition code (matching either verbatim text or "
-                                                  "XML-attribute-escaped strings inside Financial Reporting XML).")] = None,
+                                                  "XML-attribute-escaped strings inside Financial Reporting XML). Add "
+                                                  "'regex': 'true' to treat find as a Java regex (DOTALL, MULTILINE) "
+                                                  "and use $1 in replace for groups; fails if nothing matches.")] = None,
+        axis_links: Annotated[list[dict[str, str]] | None,
+                              Field(description="Replace a grid axis with a live link to a row/column template: "
+                                                "[{'axis': 'Row', 'template': '/Templates/RowTemplates/DC', "
+                                                "'format_segment': '27', 'keep_segment_ids': '52,7,57'}]. Writes a "
+                                                "SEGMENTSET and drops every segment not in keep_segment_ids. Optional: "
+                                                "'position' (default 0), 'axisId' (default Row=2, Column=1, "
+                                                "Column unverified). Formula row references are not renumbered; "
+                                                "check the preview warnings.")] = None,
         code: Annotated[str | None,
                         Field(description="Full report definition code/XML. Omit when updating an existing report or "
                                           "using `copy_from` with `replacements` or `sections`.")] = None,
@@ -505,7 +515,7 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         returns a single-use `planId` and the updated `sections`. Show the changes to the user and get their
         explicit confirmation before calling hfm_execute_action."""
         body = {"name": name, "reportType": report_type, "folder": folder, "copyFrom": copy_from,
-                "replacements": replacements, "code": code, "sections": sections, "description": description,
+                "replacements": replacements, "axisLinks": axis_links, "code": code, "sections": sections, "description": description,
                 "securityClass": security_class, "private": private}
         return await call(client.post, "/api/v1/reports/preview-save", body)
 

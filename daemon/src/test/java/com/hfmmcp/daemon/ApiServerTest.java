@@ -736,6 +736,19 @@ class ApiServerTest {
         assertEquals("Account=Sales, COGS", gotCopy.at("/sections/Rows/Row 1").asText());
         assertTrue(gotCopy.at("/sections/Header/Text 1").asText().contains("DISTRIBUTION SCHEDULE TEST"));
 
+        // Regex replacement and axis link
+        JsonNode linkPlan = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"RFJUN_DC_LINK\",\"copyFrom\":\"RFJUN_DC\","
+                        + "\"replacements\":[{\"find\":\"DISTRIBUTION (SCHEDULE)\",\"replace\":\"DIST $1\",\"regex\":\"true\"}],"
+                        + "\"axisLinks\":[{\"axis\":\"Row\",\"template\":\"/Templates/RowTemplates/DC\","
+                        + "\"format_segment\":\"3\"}]}", KEY, sid));
+        assertEquals(1, linkPlan.get("replacementsApplied").asInt());
+        assertTrue(linkPlan.get("warnings").toString().contains("/Templates/RowTemplates/DC"));
+        ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + linkPlan.get("planId").asText() + "\"}", KEY, sid));
+        JsonNode gotLink = ok(call("POST", "/api/v1/reports/get", "{\"name\":\"RFJUN_DC_LINK\"}", KEY, sid));
+        assertTrue(gotLink.get("code").asText().contains("OBJECT_LINKNAME=\"/Templates/RowTemplates/DC\""));
+        assertTrue(gotLink.at("/sections/Header/Text 1").asText().contains("DIST SCHEDULE"));
+
         // Delete FR_REPORT via preview-delete + execute
         JsonNode delPlan = ok(call("POST", "/api/v1/reports/preview-delete",
                 "{\"name\":\"RFJUN_DC_TEST\"}", KEY, sid));
