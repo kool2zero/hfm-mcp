@@ -295,6 +295,10 @@ public final class ApiServer {
                         text(b, "code"), sections, text(b, "description"), text(b, "securityClass"), isPrivate,
                         text(b, "fileType"), copyFrom, replacements);
             }
+            case "POST /api/v1/reports/preview-delete": {
+                JsonNode b = readBody(ex);
+                return actions.reports().previewDelete(s, text(b, "name"), text(b, "reportType"), text(b, "folder"));
+            }
             case "POST /api/v1/actions/execute":
                 return actions.execute(s, text(readBody(ex), "planId"));
             case "POST /api/v1/tasks/status":

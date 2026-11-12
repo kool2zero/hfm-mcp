@@ -509,6 +509,21 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
                 "securityClass": security_class, "private": private}
         return await call(client.post, "/api/v1/reports/preview-save", body)
 
+    @server.tool(annotations=PREVIEW)
+    async def hfm_preview_report_delete(
+        name: Annotated[str, Field(description="Report or book name (or 'Folder/Name', e.g. 'MONCOMP_DC_RF_TEST')")],
+        report_type: Annotated[REPORT_TYPE | None,
+                               Field(description="Optional report type (e.g. 'FR_REPORT', 'FR_BOOK', 'JOURNAL')")] = None,
+        folder: Annotated[str | None,
+                          Field(description="Optional folder path (searches from 'Root' when omitted)")] = None,
+    ) -> dict[str, Any]:
+        """Prepare permanently deleting a Financial Reporting or HFM report definition WITHOUT deleting
+        it yet. Returns the report's metadata, parsed `sections`, `effect`, and a single-use `planId`.
+        Show the report details to the user and get their explicit confirmation before calling
+        hfm_execute_action."""
+        body = {"name": name, "reportType": report_type, "folder": folder}
+        return await call(client.post, "/api/v1/reports/preview-delete", body)
+
     @server.tool(annotations=EXECUTE)
     async def hfm_execute_action(
         plan_id: Annotated[str, Field(description="planId from hfm_preview_action, after the user confirmed it")],
@@ -530,11 +545,13 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
     for tool, action in (("hfm_preview_action", None), ("hfm_preview_extract", "EXTRACT_DATA"),
                          ("hfm_preview_copy", "COPY_DATA"), ("hfm_preview_load", "LOAD_DATA"),
                          ("hfm_preview_journal_save", "JOURNAL_SAVE"), ("hfm_preview_journal_action", "JOURNAL"),
-                         ("hfm_preview_report_save", "REPORT_SAVE")):
+                         ("hfm_preview_report_save", "REPORT_SAVE"), ("hfm_preview_report_delete", "REPORT_DELETE")):
         if action is None:
             missing = not offered
         elif action == "JOURNAL":
             missing = not journal_actions
+        elif action == "REPORT_DELETE":
+            missing = not (allowed("REPORT_DELETE") or allowed("REPORT_SAVE"))
         else:
             missing = not allowed(action)
         if missing:

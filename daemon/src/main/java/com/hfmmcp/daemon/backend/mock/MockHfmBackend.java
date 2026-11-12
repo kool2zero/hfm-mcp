@@ -985,6 +985,17 @@ public final class MockHfmBackend implements HfmBackend {
                 report.encoding == null ? "UTF-8" : report.encoding));
     }
 
+    @Override
+    public void deleteReport(BackendSession session, ReportInfo info) throws BackendException {
+        check(session);
+        String folder = normalizeFolder(info.folder);
+        String key = reportKey(folder, info.reportType, info.name);
+        if (reports.remove(key) == null) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "No report '" + info.name + "' (" + info.reportType + ") in " + folder);
+        }
+    }
+
     private String renderMockReport(ReportDetail report, ReportRunRequest req) {
         Map<String, String> kv = new LinkedHashMap<>();
         if (report.code != null) {

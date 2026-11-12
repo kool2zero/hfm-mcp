@@ -133,4 +133,7 @@ public interface HfmBackend {
 
     /** Creates or replaces a report document in HFM Document Manager ({@code DocumentOM.saveDocumentContent}). */
     void saveReport(BackendSession session, ReportDetail report, boolean overwrite) throws BackendException;
+
+    /** Deletes a report document in HFM Document Manager or the EPM Financial Reporting repository. */
+    void deleteReport(BackendSession session, ReportInfo report) throws BackendException;
 }

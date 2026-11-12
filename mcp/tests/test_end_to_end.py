@@ -147,7 +147,7 @@ async def test_preview_then_execute_over_stdio(daemon_url):
             assert "action" in tools["hfm_preview_action"].input_schema["required"]
             # The daemon's allowlist has no JOURNAL_* or REPORT_SAVE entries, so no journal/report change tool is offered.
             assert not {"hfm_preview_journal_save", "hfm_preview_journal_action",
-                        "hfm_preview_report_save"} & tools.keys()
+                        "hfm_preview_report_save", "hfm_preview_report_delete"} & tools.keys()
 
             pov = {"Scenario": "Actual", "Year": "2025", "Period": "Nov"}
             before = payload(await session.call_tool("hfm_get_process_status",

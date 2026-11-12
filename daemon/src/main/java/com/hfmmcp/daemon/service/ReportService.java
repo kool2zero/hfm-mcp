@@ -41,6 +41,7 @@ import java.util.TreeMap;
  */
 public final class ReportService {
     static final String SAVE = "REPORT_SAVE";
+    static final String DELETE = "REPORT_DELETE";
 
     private static final Set<String> REPORT_TYPES = new HashSet<>(Arrays.asList(
             "JOURNAL", "INTERCOMPANY", "IC_MATCHING_TEMPLATE", "IC_TRANSACTION", "IC_MONITOR",
@@ -364,16 +365,67 @@ public final class ReportService {
         return out;
     }
 
+    public Map<String, Object> previewDelete(UserSession s, String name, String reportType, String folder) {
+        requireAllowed(DELETE);
+        if (blank(name)) {
+            throw ApiException.badRequest("bad_request", "name is required");
+        }
+        String rawName = name.trim();
+        if (rawName.contains("..") || (folder != null && folder.contains(".."))) {
+            throw ApiException.badRequest("bad_request", "name and folder must not contain '..'");
+        }
+        String[] split = splitFolderAndName(folder, rawName);
+        String effectiveFolder = split[0];
+        String effectiveName = split[1];
+        String rType = checkOptionalChoice("reportType", reportType, REPORT_TYPES);
+
+        ReportDetail existing = hfm.withSession(s, bs -> backend.getReport(bs, effectiveFolder, effectiveName, rType));
+        String code = existing.code == null ? "" : existing.code;
+
+        Plan plan = newPlan(s, DELETE, existing, true);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("planId", plan.id);
+        out.put("expiresInMinutes", config.actionPlanTtlMinutes());
+        out.put("action", DELETE);
+        out.putAll(summaryMap(existing.info));
+        out.put("charCount", code.length());
+        out.put("lineCount", countLines(code));
+        out.put("sections", parseSections(code));
+        out.put("effect", "Permanently deletes " + existing.info.reportType + " report '"
+                + existing.info.name + "' from " + existing.info.folder
+                + ". Nothing is deleted until execute is called.");
+        out.put("next", "Show the report metadata to the user. Only if they confirm permanent deletion, call execute with this planId.");
+        return out;
+    }
+
     Map<String, Object> execute(UserSession s, Object raw) {
         Plan plan = (Plan) raw;
         if (expired(plan)) {
             throw new ApiException(404, "plan_not_found",
                     "No such plan (plans are single-use and expire after " + config.actionPlanTtlMinutes()
-                            + " minutes); preview the report save again.");
+                            + " minutes); preview the report action again.");
         }
         requireAllowed(plan.action);
         ReportInfo ri = plan.report.info;
         String target = ri.folder + "/" + ri.name + " (" + ri.reportType + ")";
+        if (DELETE.equals(plan.action)) {
+            try {
+                hfm.withSession(s, bs -> {
+                    backend.deleteReport(bs, ri);
+                    return null;
+                });
+            } catch (ApiException e) {
+                audit.record(s.userName(), s.application(), plan.action, target, null, "failed", e.getMessage());
+                throw e;
+            }
+            audit.record(s.userName(), s.application(), plan.action, target, null, "completed", "deleted");
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("action", plan.action);
+            out.putAll(summaryMap(ri));
+            out.put("deleted", true);
+            out.put("completed", true);
+            return out;
+        }
         try {
             hfm.withSession(s, bs -> {
                 backend.saveReport(bs, plan.report, true);
@@ -1268,9 +1320,12 @@ public final class ReportService {
             throw new ApiException(403, "actions_disabled",
                     "Actions are disabled on this daemon (actions.enabled=false).");
         }
-        if (!config.actionsAllowed().contains(action)) {
+        Set<String> allowed = config.actionsAllowed();
+        boolean permitted = allowed.contains(action)
+                || (DELETE.equals(action) && allowed.contains(SAVE));
+        if (!permitted) {
             throw new ApiException(403, "action_not_allowed",
-                    action + " is not enabled on this daemon (allowed: " + config.actionsAllowed() + ")");
+                    action + " is not enabled on this daemon (allowed: " + allowed + ")");
         }
     }
 

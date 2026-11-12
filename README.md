@@ -11,7 +11,7 @@ Users sign in with their own LDAP credentials, so HFM security applies to everyt
         │ MCP over stdio
         ▼
  hfm-mcp  (Python, mcp/)               (user's machine)
-   - 11 read-only tools + 9 optional preview/execute action tools
+   - 11 read-only tools + 10 optional preview/execute action tools
    - password kept in the OS keychain
         │ HTTPS + X-Api-Key + X-Session-Id
         ▼
@@ -57,6 +57,7 @@ With actions enabled (see below), more:
 | `hfm_preview_journal_save` | Prepare creating or replacing a WORKING journal. HFM scans it first; scan errors leave nothing to confirm. |
 | `hfm_preview_journal_action` | Prepare SUBMIT / UNSUBMIT / APPROVE / REJECT / POST / UNPOST / DELETE on journals, with each journal's current status. |
 | `hfm_preview_report_save` | Prepare creating, copying (`copy_from`) or updating a Financial Reporting object in the EPM repository or an HFM Document Manager report (`replacements`, `sections` or `code`). |
+| `hfm_preview_report_delete` | Prepare permanently deleting a Financial Reporting object or an HFM Document Manager report. |
 
 Only `COPY_DATA` and `LOAD_DATA` write cell data, and both are off unless added to `actions.allowed`.
 
@@ -77,9 +78,10 @@ Listing reports, reading report metadata/code, and viewing rendered reports (`hf
 - **HFM Document Manager (`DocumentOM`)**: reads and executes HFM reports (`JOURNAL`, `INTERCOMPANY`,
   `IC_MATCHING_TEMPLATE`, `IC_TRANSACTION`, `IC_MONITOR`, `IC_MATCH_BY_ACCOUNT`, `IC_MATCH_BY_TRANS_ID`,
   `DATA_EXPLORER`, `HYP`) via `DocumentOM` and `SystemReportsHelper`.
-Creating, copying (`copy_from`) or updating a report definition (`hfm_preview_report_save` → `hfm_execute_action`,
-with `replacements`, `sections` including `Rows`/`Columns`/`PointOfView`, or full `code`) requires `REPORT_SAVE` in
-`actions.allowed` (off by default).
+Creating, copying (`copy_from`), updating or deleting a report definition (`hfm_preview_report_save` /
+`hfm_preview_report_delete` → `hfm_execute_action`, with `replacements`, `sections` including
+`Rows`/`Columns`/`PointOfView`, or full `code`) requires `REPORT_SAVE` (or `REPORT_DELETE`) in `actions.allowed` (off by
+default).
 
 ## Actions (process control and consolidation)
 
@@ -411,6 +413,7 @@ All `/api/v1/*` calls need `X-Api-Key`. All except login also need `X-Session-Id
 | POST | `/api/v1/reports/get` | `{name, reportType?, folder?}` |
 | POST | `/api/v1/reports/view` | `{name, reportType?, folder?, format?, pov?, slice?, entity?, partner?, stylesheet?}` |
 | POST | `/api/v1/reports/preview-save` | `{name, reportType?, folder?, copyFrom?, replacements?, code?, sections?, description?, securityClass?, private?, fileType?}` |
+| POST | `/api/v1/reports/preview-delete` | `{name, reportType?, folder?}` |
 | GET | `/health` | no auth |
 
 Errors are returned as `{"error": {"code", "message"}}`. The codes include `auth_failed`,

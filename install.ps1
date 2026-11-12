@@ -495,7 +495,7 @@ function Install-HfmMcpServer {
                     $allowed.AddRange([string[]]@('JOURNAL_SAVE', 'JOURNAL_DELETE', 'JOURNAL_SUBMIT', 'JOURNAL_UNSUBMIT', 'JOURNAL_APPROVE', 'JOURNAL_REJECT'))
                 }
                 if (Read-YesNo 'Allow posting and unposting journals (JOURNAL_POST, JOURNAL_UNPOST)?' $false) { $allowed.AddRange([string[]]@('JOURNAL_POST', 'JOURNAL_UNPOST')) }
-                if (Read-YesNo 'Allow creating and updating report definitions (REPORT_SAVE)?' $false) { $allowed.Add('REPORT_SAVE') }
+                if (Read-YesNo 'Allow creating, updating and deleting report definitions (REPORT_SAVE, REPORT_DELETE)?' $false) { $allowed.AddRange([string[]]@('REPORT_SAVE', 'REPORT_DELETE')) }
                 if (Read-YesNo 'Allow data file loads (LOAD_DATA)?' $false) {
                     $allowed.Add('LOAD_DATA')
                     $loadDir = Read-Value 'Folder load files must be in' (Join-Path $dir 'loads') -Required

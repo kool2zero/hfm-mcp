@@ -735,6 +735,18 @@ class ApiServerTest {
         assertEquals("RF JUN Reports", gotCopy.get("folder").asText());
         assertEquals("Account=Sales, COGS", gotCopy.at("/sections/Rows/Row 1").asText());
         assertTrue(gotCopy.at("/sections/Header/Text 1").asText().contains("DISTRIBUTION SCHEDULE TEST"));
+
+        // Delete FR_REPORT via preview-delete + execute
+        JsonNode delPlan = ok(call("POST", "/api/v1/reports/preview-delete",
+                "{\"name\":\"RFJUN_DC_TEST\"}", KEY, sid));
+        assertEquals("REPORT_DELETE", delPlan.get("action").asText());
+        assertEquals("RF JUN Reports", delPlan.get("folder").asText());
+        JsonNode delDone = ok(call("POST", "/api/v1/actions/execute",
+                "{\"planId\":\"" + delPlan.get("planId").asText() + "\"}", KEY, sid));
+        assertTrue(delDone.get("deleted").asBoolean());
+
+        Response afterDel = call("POST", "/api/v1/reports/get", "{\"name\":\"RFJUN_DC_TEST\"}", KEY, sid);
+        assertEquals(400, afterDel.status);
     }
 
     // ---------------------------------------------------------------- extract and copy

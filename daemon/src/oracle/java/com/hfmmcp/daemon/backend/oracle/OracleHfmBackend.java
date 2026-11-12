@@ -1492,6 +1492,29 @@ public final class OracleHfmBackend implements HfmBackend {
         }
     }
 
+    @Override
+    public void deleteReport(BackendSession session, ReportInfo ri) throws BackendException {
+        SessionInfo info = info(session);
+        String upperType = ri.reportType == null ? "" : ri.reportType.trim().toUpperCase(Locale.ROOT);
+        if (REPORT_TYPE_TO_FR_REPO.containsKey(upperType)) {
+            deleteFrReport(ri);
+            return;
+        }
+        DOCUMENTTYPES dt = toDocType(ri.reportType);
+        DOCUMENTFILETYPES ft = notBlank(ri.fileType) ? toFileType(ri.fileType) : DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_RPTDEF;
+        try {
+            DocumentOM om = new DocumentOM(info);
+            om.deleteDocuments(
+                    Collections.singletonList(ri.name),
+                    Collections.singletonList(toHfmDocPath(ri.folder)),
+                    Collections.singletonList(dt),
+                    Collections.singletonList(ft));
+        } catch (HFMException e) {
+            BackendException be = classify(e, "delete report " + ri.name);
+            throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
+        }
+    }
+
     // ---------------------------------------------------------------- Financial Reporting Repository (TENANT_ID = 'fr')
 
     private java.sql.Connection getFrConnection() throws java.sql.SQLException {
@@ -1954,6 +1977,66 @@ public final class OracleHfmBackend implements HfmBackend {
         }
         throw new BackendException(Kind.BAD_REQUEST,
                 "Financial Reporting folder '" + displayFolder(normFolder) + "' does not exist");
+    }
+
+    private void deleteFrReport(ReportInfo ri) throws BackendException {
+        String normFolder = normalizeDocPath(ri.folder);
+        FrRepoNode existing = findFrReportNode(normFolder, ri.name, ri.reportType);
+        if (existing == null) {
+            throw new BackendException(Kind.BAD_REQUEST,
+                    "Financial Reporting object '" + ri.name + "' (" + ri.reportType + ") does not exist in "
+                            + displayFolder(normFolder));
+        }
+        if ("FOLDER".equalsIgnoreCase(existing.reportType)) {
+            for (FrRepoNode n : loadFrRepositoryNodes(true)) {
+                if (existing.uuid.equals(n.parentUuid)) {
+                    throw new BackendException(Kind.BAD_REQUEST,
+                            "Cannot delete non-empty folder '" + ri.name + "'");
+                }
+            }
+        }
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                java.sql.Connection conn = getFrConnection();
+                boolean origAutoCommit = conn.getAutoCommit();
+                conn.setAutoCommit(false);
+                try {
+                    try (java.sql.PreparedStatement delIdx = conn.prepareStatement(
+                            "DELETE FROM REPOSITORY_OBJECT_PROP_INDEX WHERE OBJECT_UUID = ?");
+                         java.sql.PreparedStatement delAcl = conn.prepareStatement(
+                            "DELETE FROM REPOSITORY_OBJECT_ACLS WHERE OBJECT_UUID = ?");
+                         java.sql.PreparedStatement delProps = conn.prepareStatement(
+                            "DELETE FROM REPOSITORY_OBJECT_PROPERTIES WHERE OBJECT_UUID = ?");
+                         java.sql.PreparedStatement delObj = conn.prepareStatement(
+                            "DELETE FROM REPOSITORY_OBJECTS WHERE OBJECT_UUID = ? AND TENANT_ID = 'fr'")) {
+                        delIdx.setString(1, existing.uuid);
+                        delIdx.executeUpdate();
+                        delAcl.setString(1, existing.uuid);
+                        delAcl.executeUpdate();
+                        delProps.setString(1, existing.uuid);
+                        delProps.executeUpdate();
+                        delObj.setString(1, existing.uuid);
+                        delObj.executeUpdate();
+                    }
+                    conn.commit();
+                    synchronized (frCacheLock) {
+                        frCachedNodes = null;
+                    }
+                    return;
+                } catch (java.sql.SQLException e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(origAutoCommit);
+                }
+            } catch (java.sql.SQLException e) {
+                resetFrConnection();
+                if (attempt == 2) {
+                    throw new BackendException(Kind.HFM_ERROR,
+                            "Failed to delete Financial Reporting object '" + ri.name + "': " + e.getMessage(), e);
+                }
+            }
+        }
     }
 
     private static void upsertFrPropIndex(java.sql.Connection conn, String uuid, int version,
