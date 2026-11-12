@@ -46,6 +46,12 @@ group, balance, who created or last acted) and hfm_get_journal reads one with it
 debit/credit totals. Journal statuses are WORKING, SUBMITTED, APPROVED, REJECTED and POSTED; only a
 posted journal is in the reported numbers.
 
+Reports: hfm_list_reports lists report documents in HFM Document Manager (Journal, Intercompany,
+IC Matching, Data Explorer, Hyperion reports) with their type, folder, description, security class
+and owner. hfm_get_report reads a report's metadata, parsed sections and full report definition
+code/script. hfm_view_report executes/renders a report (with optional POV, entity/partner or
+format overrides) and returns the rendered report output and exported file path.
+
 Process control: hfm_get_process_status shows each process unit's (Scenario, Year, Period, Value,
 Entity) state per phase - Not Started, First Pass, Review Level n, Submitted, Approved, Published -
 and who acted last.
@@ -70,6 +76,10 @@ same preview -> confirm -> hfm_execute_action steps. Show the journal's lines, b
 (a delete is permanent, a post changes reported numbers) and wait for an explicit yes. Never invent
 accounts, entities or amounts: take them from the user and check member names first. After a save,
 read the journal back with hfm_get_journal and tell the user what HFM stored.
+Report changes (hfm_preview_report_save to create or update a report's definition code or metadata)
+also follow preview -> confirm -> hfm_execute_action. Read the existing report first with
+hfm_get_report before updating it, show the user the code/metadata changes, and wait for their
+explicit confirmation before calling hfm_execute_action.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -102,6 +112,9 @@ JOURNAL_POV = Field(description="Scenario, Year, Period and Value of the journal
                                 "{'Scenario': 'Actual', 'Year': '2025', 'Period': 'Dec', 'Value': '<Entity Curr Adjs>'}. "
                                 "Omitted ones use the default POV.")
 JOURNAL_ACTIONS = ("SUBMIT", "UNSUBMIT", "APPROVE", "REJECT", "POST", "UNPOST", "DELETE")
+REPORT_TYPE = Literal["JOURNAL", "INTERCOMPANY", "IC_MATCHING_TEMPLATE", "IC_TRANSACTION", "IC_MONITOR",
+                      "IC_MATCH_BY_ACCOUNT", "IC_MATCH_BY_TRANS_ID", "DATA_EXPLORER", "HYP"]
+REPORT_FORMAT = Literal["HTML", "HFM", "PDF", "RTF", "XLS", "XLSX"]
 ENTITIES = Field(description="Entities, or HFM member lists such as '{Group.[Base]}'. Omit for the default-POV entity.")
 PHASES = Field(description="Submission phases 1-9 (default [1]).")
 
@@ -250,6 +263,66 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         entity, account, ICP and custom members) and the total debits and credits."""
         return await call(client.post, "/api/v1/journals/get", {"pov": pov or {}, "label": label})
 
+    @server.tool(annotations=READ_ONLY)
+    async def hfm_list_reports(
+        report_type: Annotated[list[REPORT_TYPE] | None,
+                               Field(description="Only these report types (default: all)")] = None,
+        folder: Annotated[str | None,
+                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+        query: Annotated[str | None,
+                         Field(description="Case-insensitive text filter on report name or description")] = None,
+        include_private: Annotated[bool, Field(description="Include private reports owned by the user")] = True,
+    ) -> dict[str, Any]:
+        """List report documents in HFM Document Manager, with their reportType, fileType, folder,
+        description, securityClass, private flag, owner and lastModified timestamp, plus `byType`
+        counts. Use hfm_get_report to read a report's code/metadata or hfm_view_report to execute it."""
+        body = {"reportTypes": report_type or [], "folder": folder, "query": query,
+                "includePrivate": include_private}
+        return await call(client.post, "/api/v1/reports/list", body)
+
+    @server.tool(annotations=READ_ONLY)
+    async def hfm_get_report(
+        name: Annotated[str, Field(description="Exact report name in HFM Document Manager")],
+        report_type: Annotated[REPORT_TYPE | None,
+                               Field(description="Report type if multiple reports share the same name")] = None,
+        folder: Annotated[str | None,
+                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+    ) -> dict[str, Any]:
+        """Read a report's document metadata (reportType, fileType, folder, description, securityClass,
+        owner, private, lastModified), its parsed `sections` ([Header], [PointOfView], [Filter],
+        [Options], [Columns], ...) and its full report definition `code` / script."""
+        body = {"name": name, "reportType": report_type, "folder": folder}
+        return await call(client.post, "/api/v1/reports/get", body)
+
+    @server.tool(annotations=READ_ONLY)
+    async def hfm_view_report(
+        name: Annotated[str, Field(description="Exact report name in HFM Document Manager")],
+        report_type: Annotated[REPORT_TYPE | None,
+                               Field(description="Report type if multiple reports share the same name")] = None,
+        folder: Annotated[str | None,
+                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+        format: Annotated[REPORT_FORMAT,
+                          Field(description="Rendered output format (default 'HTML')")] = "HTML",
+        pov: Annotated[dict[str, str] | None,
+                       Field(description="Optional POV override by dimension name or prefix, e.g. "
+                                         "{'Scenario': 'Actual', 'Year': '2025', 'Period': 'Dec'}")] = None,
+        slice: Annotated[str | None,
+                         Field(description="Optional POV slice override in HFM notation, e.g. "
+                                           "'S#Actual.Y#2025.P#Dec'")] = None,
+        entity: Annotated[str | None,
+                          Field(description="Optional entity override (for Intercompany reports)")] = None,
+        partner: Annotated[str | None,
+                           Field(description="Optional partner / ICP override (for Intercompany reports)")] = None,
+        stylesheet: Annotated[str | None,
+                              Field(description="Optional stylesheet or BI Publisher template override")] = None,
+    ) -> dict[str, Any]:
+        """Execute/render an HFM report and view its output. Returns the rendered `content` (for text
+        and HTML formats) and `file` metadata (path on the daemon's export folder, bytes, lines, preview)."""
+        body = {"name": name, "reportType": report_type, "folder": folder, "format": format,
+                "pov": pov or {}, "slice": slice, "entity": entity, "partner": partner,
+                "stylesheet": stylesheet}
+        return await call(client.post, "/api/v1/reports/view", body, EXECUTE_TIMEOUT_SECONDS)
+
     if not enable_actions:
         return server
 
@@ -388,6 +461,34 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         return await call(client.post, "/api/v1/journals/preview-action",
                           {"action": action, "pov": pov or {}, "labels": labels})
 
+    @server.tool(annotations=PREVIEW)
+    async def hfm_preview_report_save(
+        name: Annotated[str, Field(description="Report document name in HFM Document Manager")],
+        report_type: Annotated[REPORT_TYPE | None,
+                               Field(description="Report type (required when creating a new report; optional "
+                                                 "when updating an existing one)")] = None,
+        folder: Annotated[str | None,
+                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+        code: Annotated[str | None,
+                        Field(description="Full report definition code/script. When updating an existing report, "
+                                          "you can either supply the updated `code` or pass `sections` to update "
+                                          "specific [Section] key=value entries in place.")] = None,
+        sections: Annotated[dict[str, dict[str, str]] | None,
+                            Field(description="Section key=value overrides to apply to the report code, e.g. "
+                                              "{'PointOfView': {'Period': 'Nov'}, 'Options': {'Entity': 'UK01'}}")] = None,
+        description: Annotated[str | None, Field(description="Report description")] = None,
+        security_class: Annotated[str | None, Field(description="HFM security class (default '[Default]')")] = None,
+        private: Annotated[bool | None, Field(description="Whether the report is private to the owner")] = None,
+    ) -> dict[str, Any]:
+        """Prepare creating or updating an HFM report definition WITHOUT saving it. Validates any
+        [PointOfView] members against HFM metadata and returns a single-use `planId`, the new `code`
+        and `sections`, and `previousCode` when replacing an existing report. Show the changes to the
+        user and get their explicit confirmation before calling hfm_execute_action."""
+        body = {"name": name, "reportType": report_type, "folder": folder, "code": code,
+                "sections": sections, "description": description, "securityClass": security_class,
+                "private": private}
+        return await call(client.post, "/api/v1/reports/preview-save", body)
+
     @server.tool(annotations=EXECUTE)
     async def hfm_execute_action(
         plan_id: Annotated[str, Field(description="planId from hfm_preview_action, after the user confirmed it")],
@@ -408,7 +509,8 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
 
     for tool, action in (("hfm_preview_action", None), ("hfm_preview_extract", "EXTRACT_DATA"),
                          ("hfm_preview_copy", "COPY_DATA"), ("hfm_preview_load", "LOAD_DATA"),
-                         ("hfm_preview_journal_save", "JOURNAL_SAVE"), ("hfm_preview_journal_action", "JOURNAL")):
+                         ("hfm_preview_journal_save", "JOURNAL_SAVE"), ("hfm_preview_journal_action", "JOURNAL"),
+                         ("hfm_preview_report_save", "REPORT_SAVE")):
         if action is None:
             missing = not offered
         elif action == "JOURNAL":

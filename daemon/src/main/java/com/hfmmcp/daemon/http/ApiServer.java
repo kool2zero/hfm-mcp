@@ -51,6 +51,8 @@ public final class ApiServer {
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<Map<String, String>>() { };
     private static final TypeReference<LinkedHashMap<String, List<String>>> VARY_MAP =
             new TypeReference<LinkedHashMap<String, List<String>>>() { };
+    private static final TypeReference<LinkedHashMap<String, Map<String, String>>> SECTIONS_MAP =
+            new TypeReference<LinkedHashMap<String, Map<String, String>>>() { };
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<List<String>>() { };
     private static final TypeReference<List<Integer>> INT_LIST = new TypeReference<List<Integer>>() { };
 
@@ -256,6 +258,34 @@ public final class ApiServer {
                 JsonNode b = readBody(ex);
                 return actions.journals().previewAction(s, text(b, "action"), map(b, "pov"),
                         list(b, "labels", STRING_LIST));
+            }
+            case "POST /api/v1/reports/list": {
+                JsonNode b = readBody(ex);
+                List<String> types = list(b, "reportTypes", STRING_LIST);
+                if (types == null && b.hasNonNull("reportType")) {
+                    types = java.util.Collections.singletonList(text(b, "reportType"));
+                }
+                Boolean includePrivate = b.hasNonNull("includePrivate") ? b.get("includePrivate").asBoolean() : null;
+                return actions.reports().list(s, types, text(b, "folder"), text(b, "query"), includePrivate);
+            }
+            case "POST /api/v1/reports/get": {
+                JsonNode b = readBody(ex);
+                return actions.reports().get(s, text(b, "name"), text(b, "reportType"), text(b, "folder"));
+            }
+            case "POST /api/v1/reports/view": {
+                JsonNode b = readBody(ex);
+                return actions.reports().view(s, text(b, "name"), text(b, "reportType"), text(b, "folder"),
+                        text(b, "format"), map(b, "pov"), text(b, "slice"), text(b, "entity"), text(b, "partner"),
+                        text(b, "stylesheet"));
+            }
+            case "POST /api/v1/reports/preview-save": {
+                JsonNode b = readBody(ex);
+                Map<String, Map<String, String>> sections = b.hasNonNull("sections")
+                        ? convert(b.get("sections"), SECTIONS_MAP, "sections") : null;
+                Boolean isPrivate = b.hasNonNull("private") ? b.get("private").asBoolean() : null;
+                return actions.reports().previewSave(s, text(b, "name"), text(b, "reportType"), text(b, "folder"),
+                        text(b, "code"), sections, text(b, "description"), text(b, "securityClass"), isPrivate,
+                        text(b, "fileType"));
             }
             case "POST /api/v1/actions/execute":
                 return actions.execute(s, text(readBody(ex), "planId"));

@@ -533,6 +533,115 @@ class ApiServerTest {
         assertTrue(log.contains("JOURNAL_SUBMIT") && log.contains("ADJ001") && log.contains("jdoe"), log);
     }
 
+    // ---------------------------------------------------------------- reports
+
+    @Test
+    void reportsAreListedReadAndViewedWithoutActions() throws IOException {
+        props.setProperty("actions.enabled", "false");
+        String sid = login("jdoe", "password");
+
+        JsonNode list = ok(call("POST", "/api/v1/reports/list", "{}", KEY, sid));
+        assertEquals(2, list.get("count").asInt());
+        assertEquals(1, list.at("/byType/JOURNAL").asInt());
+        assertEquals(1, list.at("/byType/IC_MATCH_BY_ACCOUNT").asInt());
+
+        JsonNode filtered = ok(call("POST", "/api/v1/reports/list",
+                "{\"reportTypes\":[\"journal\"],\"query\":\"monthly\"}", KEY, sid));
+        assertEquals(1, filtered.get("count").asInt());
+        assertEquals("MonthlyJournals", filtered.at("/reports/0/name").asText());
+        assertEquals("bad_request", call("POST", "/api/v1/reports/list", "{\"reportTypes\":[\"nope\"]}",
+                KEY, sid).body.at("/error/code").asText());
+
+        JsonNode rpt = ok(call("POST", "/api/v1/reports/get", "{\"name\":\"MonthlyJournals\"}", KEY, sid));
+        assertEquals("JOURNAL", rpt.get("reportType").asText());
+        assertEquals("RPTDEF", rpt.get("fileType").asText());
+        assertEquals("Root", rpt.get("folder").asText());
+        assertEquals("Actual", rpt.at("/sections/PointOfView/Scenario").asText());
+        assertTrue(rpt.get("code").asText().contains("[PointOfView]"));
+        assertTrue(rpt.get("lineCount").asInt() > 10);
+        assertEquals(400, call("POST", "/api/v1/reports/get", "{\"name\":\"NoSuchReport\"}", KEY, sid).status);
+
+        JsonNode view = ok(call("POST", "/api/v1/reports/view", "{\"name\":\"MonthlyJournals\"}", KEY, sid));
+        assertTrue(view.get("finished").asBoolean());
+        assertEquals("HTML", view.get("format").asText());
+        assertTrue(view.get("content").asText().contains("ADJ001"));
+        assertTrue(view.get("content").asText().contains("ADJ002"));
+        assertTrue(Files.exists(java.nio.file.Paths.get(view.at("/file/path").asText())));
+
+        JsonNode icView = ok(call("POST", "/api/v1/reports/view",
+                "{\"name\":\"ICMatchingByAccount\",\"format\":\"XLS\",\"pov\":{\"Period\":\"Nov\"},\"entity\":\"UK01\"}",
+                KEY, sid));
+        assertEquals("XLS", icView.get("format").asText());
+        assertEquals("P#Nov", icView.get("povSlice").asText());
+        assertTrue(icView.get("content").asText().contains("UK01;UK01;Sales;"));
+
+        assertEquals("bad_pov", call("POST", "/api/v1/reports/view",
+                "{\"name\":\"MonthlyJournals\",\"slice\":\"S#Actul\"}", KEY, sid).body.at("/error/code").asText());
+    }
+
+    @Test
+    void reportSavesAreOffUnlessAllowed() throws IOException {
+        String sid = login("jdoe", "password");
+        Response r = call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"MonthlyJournals\",\"description\":\"updated\"}", KEY, sid);
+        assertEquals(403, r.status);
+        assertEquals("action_not_allowed", r.body.at("/error/code").asText());
+    }
+
+    @Test
+    void reportIsUpdatedAndCreatedWithPreviewAndAudit() throws IOException {
+        props.setProperty("actions.allowed", "REPORT_SAVE");
+        String sid = login("jdoe", "password");
+
+        // Update existing report's section & description via sections override
+        JsonNode plan = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"MonthlyJournals\",\"description\":\"Working journals only\","
+                        + "\"sections\":{\"Filter\":{\"Status\":\"WORKING\"}}}", KEY, sid));
+        assertTrue(plan.get("replacesExisting").asBoolean());
+        assertEquals("Working journals only", plan.get("description").asText());
+        assertEquals("WORKING", plan.at("/sections/Filter/Status").asText());
+        assertTrue(plan.get("previousCode").asText().contains("WORKING;SUBMITTED;APPROVED;POSTED"));
+
+        // Nothing is saved until execute
+        assertEquals("Monthly journal adjustments listing",
+                ok(call("POST", "/api/v1/reports/get", "{\"name\":\"MonthlyJournals\"}", KEY, sid))
+                        .get("description").asText());
+
+        String planId = plan.get("planId").asText();
+        JsonNode done = ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + planId + "\"}", KEY, sid));
+        assertTrue(done.get("completed").asBoolean());
+        assertEquals(404, call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + planId + "\"}",
+                KEY, sid).status, "plans are single-use");
+
+        JsonNode updated = ok(call("POST", "/api/v1/reports/get", "{\"name\":\"MonthlyJournals\"}", KEY, sid));
+        assertEquals("Working journals only", updated.get("description").asText());
+        assertEquals("WORKING", updated.at("/sections/Filter/Status").asText());
+
+        // Viewing the updated report now only renders WORKING journals (ADJ001, not ADJ002)
+        JsonNode rendered = ok(call("POST", "/api/v1/reports/view", "{\"name\":\"MonthlyJournals\"}", KEY, sid));
+        assertTrue(rendered.get("content").asText().contains("ADJ001"));
+        assertFalse(rendered.get("content").asText().contains("ADJ002"));
+
+        // Create a new report from full code
+        String newCode = "[Header]\nReportType=Journal\n[PointOfView]\nScenario=Budget\nYear=2025\nPeriod=Dec\n";
+        JsonNode createPlan = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"BudgetJournals\",\"reportType\":\"JOURNAL\",\"description\":\"Budget report\","
+                        + "\"private\":true,\"code\":\"" + newCode.replace("\n", "\\n") + "\"}", KEY, sid));
+        assertFalse(createPlan.get("replacesExisting").asBoolean());
+        assertTrue(createPlan.get("private").asBoolean());
+        ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + createPlan.get("planId").asText() + "\"}", KEY, sid));
+        assertEquals(3, ok(call("POST", "/api/v1/reports/list", "{}", KEY, sid)).get("count").asInt());
+
+        // Invalid POV member in report [PointOfView] is rejected at preview
+        Response badPov = call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"MonthlyJournals\",\"sections\":{\"PointOfView\":{\"Scenario\":\"NoSuchScenario\"}}}",
+                KEY, sid);
+        assertEquals("bad_pov", badPov.body.at("/error/code").asText());
+
+        String log = new String(Files.readAllBytes(auditFile), StandardCharsets.UTF_8);
+        assertTrue(log.contains("REPORT_SAVE") && log.contains("MonthlyJournals") && log.contains("BudgetJournals"), log);
+    }
+
     // ---------------------------------------------------------------- extract and copy
 
     @Test

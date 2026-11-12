@@ -105,4 +105,31 @@ public interface HfmBackend {
      */
     List<String> runJournalAction(BackendSession session, JournalAction action, List<String> labels,
                                   String scenario, String year, String period) throws BackendException;
+
+    // ---------------------------------------------------------------- reports
+
+    /** Lists report documents in HFM Document Manager matching {@code query}. */
+    List<ReportInfo> listReports(BackendSession session, ReportQuery query) throws BackendException;
+
+    /**
+     * Reads a report's metadata and definition code/script ({@code DocumentOM.getDocumentInfo} and
+     * {@code getDocumentContent}); throws BAD_REQUEST when no such report exists.
+     */
+    ReportDetail getReport(BackendSession session, String folder, String name, String reportType)
+            throws BackendException;
+
+    /**
+     * Starts generating a rendered report ({@code SystemReportsHelper}), returning the HFM task ID
+     * to poll with {@link #getTasksProgress} and fetch with {@link #fetchReportFile}.
+     */
+    int startReport(BackendSession session, ReportDetail report, ReportRunRequest request) throws BackendException;
+
+    /**
+     * Downloads the rendered report file of a finished report task into {@code directory}
+     * ({@code AdministrationOM.getRunningTaskFile}).
+     */
+    Path fetchReportFile(BackendSession session, int taskId, Path directory, String fileName) throws BackendException;
+
+    /** Creates or replaces a report document in HFM Document Manager ({@code DocumentOM.saveDocumentContent}). */
+    void saveReport(BackendSession session, ReportDetail report, boolean overwrite) throws BackendException;
 }

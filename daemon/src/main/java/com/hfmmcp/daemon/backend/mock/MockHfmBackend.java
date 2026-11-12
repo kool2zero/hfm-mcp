@@ -17,6 +17,10 @@ import com.hfmmcp.daemon.backend.LoadRequest;
 import com.hfmmcp.daemon.backend.MemberInfo;
 import com.hfmmcp.daemon.backend.ProcessAction;
 import com.hfmmcp.daemon.backend.ProcessState;
+import com.hfmmcp.daemon.backend.ReportDetail;
+import com.hfmmcp.daemon.backend.ReportInfo;
+import com.hfmmcp.daemon.backend.ReportQuery;
+import com.hfmmcp.daemon.backend.ReportRunRequest;
 import com.hfmmcp.daemon.backend.ServerTask;
 import com.hfmmcp.daemon.backend.TaskProgress;
 import com.hfmmcp.daemon.pov.Pov;
@@ -100,6 +104,9 @@ public final class MockHfmBackend implements HfmBackend {
     private final Map<String, JournalDetail> journals = new ConcurrentHashMap<>();
     private final Map<String, String> journalOwners = new ConcurrentHashMap<>();
     private final AtomicInteger nextJournalId = new AtomicInteger(1);
+    /** Reports by FOLDER|TYPE|NAME (upper-case). */
+    private final Map<String, ReportDetail> reports = new ConcurrentHashMap<>();
+    private final Map<Integer, byte[]> reportFiles = new ConcurrentHashMap<>();
 
     public MockHfmBackend() {
         tree("Scenario", "", "Actual", "Budget");
@@ -127,6 +134,45 @@ public final class MockHfmBackend implements HfmBackend {
         tree("Custom4", "", "[None]");
         seedJournal("ADJ001", "Reclass UK opex", "Reclasses", "WORKING", "UK01", "Opex", "COGS", "250");
         seedJournal("ADJ002", "US accrual", "Accruals", "SUBMITTED", "US01", "Opex", "Sales", "1000");
+        seedReport("MonthlyJournals", "JOURNAL", "Monthly journal adjustments listing",
+                "[Header]\n"
+                        + "ReportType=Journal\n"
+                        + "ReportDescription=Monthly journal adjustments listing\n"
+                        + "StyleSheet=JNL Style Sheet (Default)\n"
+                        + "\n"
+                        + "[PointOfView]\n"
+                        + "Scenario=Actual\n"
+                        + "Year=2025\n"
+                        + "Period=Dec\n"
+                        + "Value=<Entity Currency>\n"
+                        + "\n"
+                        + "[Filter]\n"
+                        + "Status=WORKING;SUBMITTED;APPROVED;POSTED\n"
+                        + "Type=REGULAR;AUTOREVERSING\n"
+                        + "\n"
+                        + "[Columns]\n"
+                        + "Columns=Label,Group,Status,Entity,Account,Description,Debit,Credit\n");
+        seedReport("ICMatchingByAccount", "IC_MATCH_BY_ACCOUNT", "Intercompany matching report by account",
+                "[Header]\n"
+                        + "ReportType=Intercompany\n"
+                        + "ReportDescription=Intercompany matching report by account\n"
+                        + "StyleSheet=IC Style Sheet (Default)\n"
+                        + "\n"
+                        + "[PointOfView]\n"
+                        + "Scenario=Actual\n"
+                        + "Year=2025\n"
+                        + "Period=Dec\n"
+                        + "View=YTD\n"
+                        + "Value=<Entity Currency>\n"
+                        + "\n"
+                        + "[Options]\n"
+                        + "Entity=US01\n"
+                        + "Partner=UK01\n"
+                        + "MatchingTolerance=0.00\n"
+                        + "SuppressMatches=False\n"
+                        + "\n"
+                        + "[Accounts]\n"
+                        + "Accounts=Sales,COGS\n");
         descriptions.put("Group", "Consolidated group");
         descriptions.put("US", "United States");
         descriptions.put("US01", "US Operations East");
@@ -753,6 +799,284 @@ public final class MockHfmBackend implements HfmBackend {
             default:
                 return null;
         }
+    }
+
+    // ---------------------------------------------------------------- reports
+
+    private void seedReport(String name, String reportType, String description, String code) {
+        ReportInfo info = new ReportInfo(name, reportType, "RPTDEF", "Root", description, "[Default]", false,
+                "admin", 1735689600000L);
+        reports.put(reportKey("Root", reportType, name), new ReportDetail(info, code, "UTF-8"));
+    }
+
+    private static String normalizeFolder(String folder) {
+        if (folder == null || folder.trim().isEmpty() || "/".equals(folder.trim())) {
+            return "Root";
+        }
+        String f = folder.trim().replace('\\', '/');
+        while (f.startsWith("/")) {
+            f = f.substring(1);
+        }
+        while (f.endsWith("/")) {
+            f = f.substring(0, f.length() - 1);
+        }
+        return f.isEmpty() || "root".equalsIgnoreCase(f) ? "Root" : f;
+    }
+
+    private static String reportKey(String folder, String reportType, String name) {
+        return normalizeFolder(folder).toUpperCase(Locale.ROOT) + "|"
+                + reportType.toUpperCase(Locale.ROOT) + "|"
+                + name.toUpperCase(Locale.ROOT);
+    }
+
+    @Override
+    public List<ReportInfo> listReports(BackendSession session, ReportQuery q) throws BackendException {
+        check(session);
+        String user = ((MockSession) session).user;
+        String folder = q.folder == null || q.folder.trim().isEmpty() ? null : normalizeFolder(q.folder);
+        List<ReportInfo> out = new ArrayList<>();
+        for (ReportDetail r : reports.values()) {
+            ReportInfo info = r.info;
+            if (info.isPrivate && (!q.includePrivate || !user.equalsIgnoreCase(info.owner))) {
+                continue;
+            }
+            if (folder != null && !folder.equalsIgnoreCase(info.folder)) {
+                continue;
+            }
+            if (q.reportTypes != null && !q.reportTypes.isEmpty() && !q.reportTypes.contains(info.reportType)) {
+                continue;
+            }
+            if (!matches(info.name, q.query) && !matches(info.description, q.query)) {
+                continue;
+            }
+            out.add(info);
+        }
+        out.sort((a, b) -> {
+            int c = a.name.compareToIgnoreCase(b.name);
+            return c != 0 ? c : a.reportType.compareToIgnoreCase(b.reportType);
+        });
+        return out;
+    }
+
+    @Override
+    public ReportDetail getReport(BackendSession session, String folder, String name, String reportType)
+            throws BackendException {
+        check(session);
+        String f = normalizeFolder(folder);
+        if (reportType != null && !reportType.trim().isEmpty()) {
+            ReportDetail d = reports.get(reportKey(f, reportType.trim(), name));
+            if (d == null) {
+                throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                        "No report '" + name + "' (" + reportType + ") in " + f);
+            }
+            return d;
+        }
+        List<ReportDetail> matches = new ArrayList<>();
+        for (ReportDetail d : reports.values()) {
+            if (d.info.folder.equalsIgnoreCase(f) && d.info.name.equalsIgnoreCase(name)) {
+                matches.add(d);
+            }
+        }
+        if (matches.isEmpty()) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "No report '" + name + "' in " + f);
+        }
+        if (matches.size() > 1) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "Multiple reports named '" + name + "' in " + f + "; specify reportType");
+        }
+        return matches.get(0);
+    }
+
+    @Override
+    public int startReport(BackendSession session, ReportDetail report, ReportRunRequest request)
+            throws BackendException {
+        check(session);
+        String rendered = renderMockReport(report, request);
+        int id = nextTaskId.incrementAndGet();
+        reportFiles.put(id, rendered.getBytes(StandardCharsets.UTF_8));
+        tasks.put(id, new TaskProgress(id, TaskProgress.Status.COMPLETED, 100,
+                "Report " + report.info.name + " (" + request.format + ")"));
+        return id;
+    }
+
+    @Override
+    public Path fetchReportFile(BackendSession session, int taskId, Path directory, String fileName)
+            throws BackendException {
+        check(session);
+        byte[] data = reportFiles.get(taskId);
+        if (data == null) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST, "No report output for task " + taskId);
+        }
+        try {
+            Files.createDirectories(directory);
+            Path out = directory.resolve(fileName);
+            Files.write(out, data);
+            return out;
+        } catch (IOException e) {
+            throw new BackendException(BackendException.Kind.UNAVAILABLE,
+                    "Could not write report file: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void saveReport(BackendSession session, ReportDetail report, boolean overwrite) throws BackendException {
+        check(session);
+        ReportInfo info = report.info;
+        String folder = normalizeFolder(info.folder);
+        String key = reportKey(folder, info.reportType, info.name);
+        if (!overwrite && reports.containsKey(key)) {
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "Report '" + info.name + "' (" + info.reportType + ") already exists in " + folder);
+        }
+        String owner = info.owner == null || info.owner.isEmpty() ? ((MockSession) session).user : info.owner;
+        long modified = info.lastModified > 0 ? info.lastModified : System.currentTimeMillis();
+        ReportInfo saved = new ReportInfo(info.name, info.reportType,
+                info.fileType == null || info.fileType.isEmpty() ? "RPTDEF" : info.fileType,
+                folder, info.description == null ? "" : info.description,
+                info.securityClass == null || info.securityClass.isEmpty() ? "[Default]" : info.securityClass,
+                info.isPrivate, owner, modified);
+        reports.put(key, new ReportDetail(saved, report.code == null ? "" : report.code,
+                report.encoding == null ? "UTF-8" : report.encoding));
+    }
+
+    private String renderMockReport(ReportDetail report, ReportRunRequest req) {
+        Map<String, String> kv = new LinkedHashMap<>();
+        if (report.code != null) {
+            for (String line : report.code.split("\\r?\\n")) {
+                String t = line.trim();
+                int eq = t.indexOf('=');
+                if (eq > 0 && !t.startsWith("[") && !t.startsWith("'") && !t.startsWith("#")) {
+                    kv.put(t.substring(0, eq).trim(), t.substring(eq + 1).trim());
+                }
+            }
+        }
+        String scenario = kv.getOrDefault("Scenario", "Actual");
+        String year = kv.getOrDefault("Year", "2025");
+        String period = kv.getOrDefault("Period", "Dec");
+        String view = kv.getOrDefault("View", "YTD");
+        String value = kv.getOrDefault("Value", "<Entity Currency>");
+        if (req.povSlice != null && !req.povSlice.trim().isEmpty()) {
+            try {
+                Map<String, String> p = Pov.parse(req.povSlice);
+                if (p.containsKey("S")) {
+                    scenario = p.get("S");
+                }
+                if (p.containsKey("Y")) {
+                    year = p.get("Y");
+                }
+                if (p.containsKey("P")) {
+                    period = p.get("P");
+                }
+                if (p.containsKey("W")) {
+                    view = p.get("W");
+                }
+                if (p.containsKey("V")) {
+                    value = p.get("V");
+                }
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        String desc = kv.getOrDefault("ReportDescription",
+                report.info.description != null ? report.info.description : report.info.name);
+        String style = req.stylesheet != null && !req.stylesheet.isEmpty()
+                ? req.stylesheet : kv.getOrDefault("StyleSheet", "Default");
+        boolean html = "HTML".equalsIgnoreCase(req.format) || "HFM".equalsIgnoreCase(req.format);
+        StringBuilder sb = new StringBuilder();
+        if (html) {
+            sb.append("<html><head><title>").append(report.info.name).append("</title></head><body>\n");
+            sb.append("<h1>").append(report.info.name).append(" - ").append(desc).append("</h1>\n");
+            sb.append("<p>POV: S#").append(scenario).append(".Y#").append(year).append(".P#").append(period)
+                    .append(".W#").append(view).append(".V#").append(value)
+                    .append(" | StyleSheet: ").append(style).append("</p>\n");
+        } else {
+            sb.append("Report: ").append(report.info.name).append(" - ").append(desc).append("\n");
+            sb.append("Format: ").append(req.format).append(" | StyleSheet: ").append(style).append("\n");
+            sb.append("POV: S#").append(scenario).append(".Y#").append(year).append(".P#").append(period)
+                    .append(".W#").append(view).append(".V#").append(value).append("\n");
+        }
+        if ("JOURNAL".equalsIgnoreCase(report.info.reportType)) {
+            String statusFilter = kv.getOrDefault("Status", "");
+            List<String> allowedStatuses = new ArrayList<>();
+            if (!statusFilter.isEmpty()) {
+                for (String s : statusFilter.split("[;,]")) {
+                    if (!s.trim().isEmpty()) {
+                        allowedStatuses.add(s.trim().toUpperCase(Locale.ROOT));
+                    }
+                }
+            }
+            String prefix = scenario + "|" + year + "|" + period + "|";
+            List<JournalDetail> matched = new ArrayList<>();
+            for (Map.Entry<String, JournalDetail> e : journals.entrySet()) {
+                if (!e.getKey().startsWith(prefix)) {
+                    continue;
+                }
+                JournalDetail j = e.getValue();
+                if (!allowedStatuses.isEmpty() && !allowedStatuses.contains(j.status.toUpperCase(Locale.ROOT))) {
+                    continue;
+                }
+                matched.add(j);
+            }
+            matched.sort((a, b) -> a.label.compareToIgnoreCase(b.label));
+            if (html) {
+                sb.append("<table><thead><tr><th>Label</th><th>Group</th><th>Status</th><th>Entity</th>"
+                        + "<th>Account</th><th>Side</th><th>Amount</th></tr></thead><tbody>\n");
+                for (JournalDetail j : matched) {
+                    for (JournalDetail.Line l : j.lines) {
+                        sb.append("<tr><td>").append(j.label).append("</td><td>").append(j.group)
+                                .append("</td><td>").append(j.status).append("</td><td>")
+                                .append(l.dimensions.get("Entity")).append("</td><td>")
+                                .append(l.dimensions.get("Account")).append("</td><td>")
+                                .append(l.side).append("</td><td>").append(l.amount).append("</td></tr>\n");
+                    }
+                }
+                sb.append("</tbody></table></body></html>\n");
+            } else {
+                sb.append("Label;Group;Status;Entity;Account;Side;Amount\n");
+                for (JournalDetail j : matched) {
+                    for (JournalDetail.Line l : j.lines) {
+                        sb.append(j.label).append(";").append(j.group).append(";").append(j.status).append(";")
+                                .append(l.dimensions.get("Entity")).append(";")
+                                .append(l.dimensions.get("Account")).append(";")
+                                .append(l.side).append(";").append(l.amount).append("\n");
+                    }
+                }
+            }
+        } else {
+            String entity = req.entity != null && !req.entity.isEmpty()
+                    ? req.entity : kv.getOrDefault("Entity", "US01");
+            String partner = req.partner != null && !req.partner.isEmpty()
+                    ? req.partner : kv.getOrDefault("Partner", "UK01");
+            Map<String, String> pov = new LinkedHashMap<>();
+            pov.put("S", scenario);
+            pov.put("Y", year);
+            pov.put("P", period);
+            pov.put("W", view);
+            String accountsRaw = kv.getOrDefault("Accounts", "Sales,COGS");
+            if (html) {
+                sb.append("<p>Entity: ").append(entity).append(" | Partner: ").append(partner).append("</p>\n");
+                sb.append("<table><thead><tr><th>Entity</th><th>Partner</th><th>Account</th><th>Amount</th></tr></thead><tbody>\n");
+                for (String acct : accountsRaw.split("[,;]")) {
+                    String a = acct.trim();
+                    if (!a.isEmpty()) {
+                        sb.append("<tr><td>").append(entity).append("</td><td>").append(partner)
+                                .append("</td><td>").append(a).append("</td><td>")
+                                .append(baseValue(pov, entity, a)).append("</td></tr>\n");
+                    }
+                }
+                sb.append("</tbody></table></body></html>\n");
+            } else {
+                sb.append("Entity;Partner;Account;Amount\n");
+                for (String acct : accountsRaw.split("[,;]")) {
+                    String a = acct.trim();
+                    if (!a.isEmpty()) {
+                        sb.append(entity).append(";").append(partner).append(";").append(a).append(";")
+                                .append(baseValue(pov, entity, a)).append("\n");
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 
     // ---------------------------------------------------------------- helpers

@@ -1,0 +1,3 @@
+package oracle.epm.fm.domainobject.reports;
+import oracle.epm.fm.common.datatype.transport.REPORT_FORMATS;
+public class ReportOverrideOptions { public ReportOverrideOptions(){} public String getPovSliceString(){return null;} public void setPovSliceString(String povSliceString){} public REPORT_FORMATS getReportFormat(){return null;} public void setReportFormat(REPORT_FORMATS reportFormat){} public String getEntity(){return null;} public void setEntity(String entity){} public String getPartner(){return null;} public void setPartner(String partner){} public String getStylesheetName(){return null;} public void setStylesheetName(String stylesheetName){} }

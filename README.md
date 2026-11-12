@@ -38,8 +38,11 @@ runtimes. Keeping HFM in a small JDK 8 daemon keeps it on a supported runtime.
 | `hfm_validate_pov` | Check every member of an HFM POV string (`;` lists, `{Parent.[List]}`, `Parent.Child`), with reasons and "did you mean" suggestions. |
 | `hfm_list_journals` | Journals of a Scenario / Year / Period / Value, filtered by status, type, label, group or entity; counts per status. |
 | `hfm_get_journal` | One journal with its line items (side, amount, entity, account, ICP, customs) and debit / credit totals. |
+| `hfm_list_reports` | Report documents in HFM Document Manager (Journal, Intercompany, IC Matching, Data Explorer, Hyperion), filtered by type, folder or name/description. |
+| `hfm_get_report` | A report's document metadata, parsed `[Section]` settings, and full report definition code / script. |
+| `hfm_view_report` | Execute / render a report (`SystemReportsHelper`) with optional POV, entity/partner and format (`HTML`, `HFM`, `PDF`, `RTF`, `XLS`, `XLSX`) overrides, returning the rendered output and exported file path. |
 
-With actions enabled (see below), three more:
+With actions enabled (see below), more:
 
 | Tool | Purpose |
 |---|---|
@@ -51,6 +54,7 @@ With actions enabled (see below), three more:
 | `hfm_get_task_status` | Progress of a consolidation or extract that was still running when `hfm_execute_action` returned. |
 | `hfm_preview_journal_save` | Prepare creating or replacing a WORKING journal. HFM scans it first; scan errors leave nothing to confirm. |
 | `hfm_preview_journal_action` | Prepare SUBMIT / UNSUBMIT / APPROVE / REJECT / POST / UNPOST / DELETE on journals, with each journal's current status. |
+| `hfm_preview_report_save` | Prepare creating or updating a report's definition code/script and metadata (`DocumentOM.saveDocumentContent`). |
 
 Only `COPY_DATA` and `LOAD_DATA` write cell data, and both are off unless added to `actions.allowed`.
 
@@ -60,6 +64,10 @@ Reading journals (`hfm_list_journals`, `hfm_get_journal`) needs no actions. Chan
 journal security and workflow rules apply: a journal HFM will not move is reported as **not processed**. A posted
 journal changes reported numbers, and a delete is permanent. Journals are not edited in place: a save replaces the lines
 of a WORKING or REJECTED journal with the same label. Journal templates are not supported.
+
+Listing reports, reading report metadata/code, and viewing rendered reports (`hfm_list_reports`, `hfm_get_report`,
+`hfm_view_report`) need no actions. Creating or updating a report definition (`hfm_preview_report_save` →
+`hfm_execute_action`) requires `REPORT_SAVE` in `actions.allowed` (off by default).
 
 ## Actions (process control and consolidation)
 

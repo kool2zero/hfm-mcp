@@ -19,6 +19,10 @@ import com.hfmmcp.daemon.backend.LoadRequest;
 import com.hfmmcp.daemon.backend.MemberInfo;
 import com.hfmmcp.daemon.backend.ProcessAction;
 import com.hfmmcp.daemon.backend.ProcessState;
+import com.hfmmcp.daemon.backend.ReportDetail;
+import com.hfmmcp.daemon.backend.ReportInfo;
+import com.hfmmcp.daemon.backend.ReportQuery;
+import com.hfmmcp.daemon.backend.ReportRunRequest;
 import com.hfmmcp.daemon.backend.ServerTask;
 import com.hfmmcp.daemon.backend.TaskProgress;
 import com.hfmmcp.daemon.http.Json;
@@ -79,7 +83,18 @@ import oracle.epm.fm.common.datatype.transport.JournalDisplayLine;
 import oracle.epm.fm.common.datatype.transport.JournalErrorDetail;
 import oracle.epm.fm.common.datatype.transport.JournalFilter;
 import oracle.epm.fm.common.datatype.transport.JournalLineItem;
+import oracle.epm.fm.common.datatype.transport.DOCUMENTFILETYPES;
+import oracle.epm.fm.common.datatype.transport.DOCUMENTTYPES;
+import oracle.epm.fm.common.datatype.transport.ENUMSHOWPRIVATEDOCS;
+import oracle.epm.fm.common.datatype.transport.FMDocument;
+import oracle.epm.fm.common.datatype.transport.REPORT_FORMATS;
+import oracle.epm.fm.common.datatype.transport.REPORT_TYPES;
+import oracle.epm.fm.common.datatype.transport.SystemReport;
+import oracle.epm.fm.domainobject.common.SystemReportsHelper;
+import oracle.epm.fm.domainobject.data.GenericDocument;
+import oracle.epm.fm.domainobject.document.DocumentOM;
 import oracle.epm.fm.domainobject.journal.JournalOM;
+import oracle.epm.fm.domainobject.reports.ReportOverrideOptions;
 import oracle.epm.fm.common.exception.HFMException;
 import oracle.epm.fm.common.exception.HResultConsts;
 import oracle.epm.fm.domainobject.administration.AdministrationOM;
@@ -224,13 +239,15 @@ public final class OracleHfmBackend implements HfmBackend {
         final SessionInfo info;
         final String ssoToken;
         final String cluster;
+        final String application;
         /** Custom dimension name (lower case) → "CustomN", an alternative name HFM accepts for member queries. */
         final Map<String, String> customAliases = new java.util.concurrent.ConcurrentHashMap<>();
 
-        OracleSession(SessionInfo info, String ssoToken, String cluster) {
+        OracleSession(SessionInfo info, String ssoToken, String cluster, String application) {
             this.info = info;
             this.ssoToken = ssoToken;
             this.cluster = cluster;
+            this.application = application;
         }
     }
 
@@ -264,7 +281,7 @@ public final class OracleHfmBackend implements HfmBackend {
             if (info == null) {
                 throw new BackendException(Kind.HFM_ERROR, "HFM returned no session for " + application);
             }
-            return new OracleSession(info, auth.ssoToken(), clusterName);
+            return new OracleSession(info, auth.ssoToken(), clusterName, application);
         } catch (HFMException e) {
             if (ErrorCodeConsts.ERROR_CREATING_SESSION_FOR_APPLICATION.equals(e.getErrorCode())) {
                 throw new BackendException(Kind.HFM_ERROR, "Cannot open application '" + application
@@ -1029,6 +1046,523 @@ public final class OracleHfmBackend implements HfmBackend {
             }
         }
         throw new BackendException(Kind.BAD_REQUEST, "side must be DEBIT or CREDIT");
+    }
+
+    // ---------------------------------------------------------------- reports
+
+    private static final Map<String, DOCUMENTTYPES> REPORT_DOC_TYPES = new LinkedHashMap<>();
+
+    static {
+        REPORT_DOC_TYPES.put("JOURNAL", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTJOURNAL);
+        REPORT_DOC_TYPES.put("INTERCOMPANY", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTINTERCOMPANY);
+        REPORT_DOC_TYPES.put("IC_MATCHING_TEMPLATE", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTICMATCHINGTEMPLATE);
+        REPORT_DOC_TYPES.put("IC_TRANSACTION", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTICTRANSACTION);
+        REPORT_DOC_TYPES.put("IC_MONITOR", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTICMONITOR);
+        REPORT_DOC_TYPES.put("IC_MATCH_BY_ACCOUNT", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTICMATCHBYACCOUNT);
+        REPORT_DOC_TYPES.put("IC_MATCH_BY_TRANS_ID", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTICMATCHBYTRANSID);
+        REPORT_DOC_TYPES.put("DATA_EXPLORER", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTDATAEXPLORER);
+        REPORT_DOC_TYPES.put("HYP", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTHYP);
+    }
+
+    @Override
+    public List<ReportInfo> listReports(BackendSession session, ReportQuery q) throws BackendException {
+        SessionInfo info = info(session);
+        ENUMSHOWPRIVATEDOCS priv = q.includePrivate
+                ? ENUMSHOWPRIVATEDOCS.ENUMSHOWPRIVATEDOCS_SHOW
+                : ENUMSHOWPRIVATEDOCS.ENUMSHOWPRIVATEDOCS_DONTSHOW;
+        List<DOCUMENTTYPES> wantedTypes = new ArrayList<>();
+        if (q.reportTypes != null && !q.reportTypes.isEmpty()) {
+            for (String rt : q.reportTypes) {
+                wantedTypes.add(toDocType(rt));
+            }
+        } else {
+            wantedTypes.addAll(REPORT_DOC_TYPES.values());
+        }
+        String folder = normalizeDocPath(q.folder);
+        try {
+            DocumentOM om = new DocumentOM(info);
+            List<FMDocument> docs = new ArrayList<>();
+            if (q.reportTypes == null || q.reportTypes.isEmpty()) {
+                List<FMDocument> all = enumDocsAtPath(om, folder, DOCUMENTTYPES.WEBOM_DOCTYPE_ALL,
+                        DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
+                if (all != null && !all.isEmpty()) {
+                    docs.addAll(all);
+                } else {
+                    for (DOCUMENTTYPES dt : wantedTypes) {
+                        List<FMDocument> found = enumDocsAtPath(om, folder, dt,
+                                DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
+                        if (found != null) {
+                            docs.addAll(found);
+                        }
+                    }
+                }
+            } else {
+                for (DOCUMENTTYPES dt : wantedTypes) {
+                    List<FMDocument> found = enumDocsAtPath(om, folder, dt,
+                            DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
+                    if (found != null) {
+                        docs.addAll(found);
+                    }
+                }
+            }
+            Set<DOCUMENTTYPES> allowedSet = new HashSet<>(wantedTypes);
+            Set<String> seen = new HashSet<>();
+            List<ReportInfo> out = new ArrayList<>();
+            for (FMDocument d : docs) {
+                if (d == null || d.getDocType() == null || !allowedSet.contains(d.getDocType())) {
+                    continue;
+                }
+                ReportInfo ri = toReportInfo(d, folder);
+                if (notBlank(q.query)) {
+                    String needle = q.query.trim().toLowerCase(Locale.ROOT);
+                    boolean nameMatch = ri.name != null && ri.name.toLowerCase(Locale.ROOT).contains(needle);
+                    boolean descMatch = ri.description != null && ri.description.toLowerCase(Locale.ROOT).contains(needle);
+                    if (!nameMatch && !descMatch) {
+                        continue;
+                    }
+                }
+                String key = ri.folder.toUpperCase(Locale.ROOT) + "|" + ri.reportType + "|"
+                        + ri.name.toUpperCase(Locale.ROOT);
+                if (seen.add(key)) {
+                    out.add(ri);
+                }
+            }
+            out.sort((a, b) -> {
+                int c = a.name.compareToIgnoreCase(b.name);
+                return c != 0 ? c : a.reportType.compareToIgnoreCase(b.reportType);
+            });
+            return out;
+        } catch (HFMException e) {
+            throw classify(e, "list reports");
+        }
+    }
+
+    @Override
+    public ReportDetail getReport(BackendSession session, String folder, String name, String reportType)
+            throws BackendException {
+        SessionInfo info = info(session);
+        String normFolder = normalizeDocPath(folder);
+        try {
+            DocumentOM om = new DocumentOM(info);
+            ReportInfo meta = null;
+            DOCUMENTTYPES dt = notBlank(reportType) ? toDocType(reportType) : null;
+            DOCUMENTFILETYPES ft = DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_RPTDEF;
+            if (dt != null) {
+                FMDocument doc = getDocInfoAtPath(om, normFolder, name, dt, ft);
+                if (doc != null) {
+                    meta = toReportInfo(doc, normFolder);
+                    ft = doc.getFileType() != null ? doc.getFileType() : ft;
+                }
+            }
+            if (meta == null) {
+                List<String> filterTypes = dt == null
+                        ? Collections.emptyList()
+                        : Collections.singletonList(fromDocType(dt));
+                List<ReportInfo> candidates = listReports(session, new ReportQuery(filterTypes, normFolder, null, true));
+                List<ReportInfo> matches = new ArrayList<>();
+                for (ReportInfo c : candidates) {
+                    if (c.name != null && c.name.equalsIgnoreCase(name)) {
+                        matches.add(c);
+                    }
+                }
+                if (matches.isEmpty()) {
+                    throw new BackendException(Kind.BAD_REQUEST,
+                            "No report '" + name + "'" + (notBlank(reportType) ? " (" + reportType + ")" : "")
+                                    + " in " + displayFolder(normFolder));
+                }
+                if (matches.size() > 1) {
+                    throw new BackendException(Kind.BAD_REQUEST,
+                            "Multiple reports named '" + name + "' in " + displayFolder(normFolder)
+                                    + "; specify reportType");
+                }
+                meta = matches.get(0);
+                dt = toDocType(meta.reportType);
+                ft = toFileType(meta.fileType);
+            }
+            final DOCUMENTTYPES docType = dt;
+            final DOCUMENTFILETYPES fileType = ft;
+            final String docName = meta.name;
+            byte[] raw = getDocContentAtPath(om, normFolder, docName, docType, fileType);
+            if (raw == null) {
+                raw = new byte[0];
+            }
+            DecodedText decoded = decodeBytes(raw);
+            return new ReportDetail(meta, decoded.text, decoded.encoding);
+        } catch (HFMException e) {
+            BackendException be = classify(e, "read report " + name);
+            throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
+        }
+    }
+
+    @Override
+    public int startReport(BackendSession session, ReportDetail report, ReportRunRequest request)
+            throws BackendException {
+        OracleSession os = oracle(session);
+        REPORT_TYPES rType = toSystemReportType(report.info.reportType);
+        REPORT_FORMATS rFormat = toSystemReportFormat(request.format);
+        ReportOverrideOptions overrides = new ReportOverrideOptions();
+        overrides.setReportFormat(rFormat);
+        boolean hasOverrides = false;
+        if (notBlank(request.povSlice)) {
+            overrides.setPovSliceString(request.povSlice.trim());
+            hasOverrides = true;
+        }
+        if (notBlank(request.entity)) {
+            overrides.setEntity(request.entity.trim());
+            hasOverrides = true;
+        }
+        if (notBlank(request.partner)) {
+            overrides.setPartner(request.partner.trim());
+            hasOverrides = true;
+        }
+        if (notBlank(request.stylesheet)) {
+            overrides.setStylesheetName(request.stylesheet.trim());
+            hasOverrides = true;
+        }
+        String hfmPath = toHfmDocPath(report.info.folder);
+        try {
+            SystemReportsHelper helper = new SystemReportsHelper(os.info);
+            if (hasOverrides) {
+                try {
+                    int id = helper.generateReport(hfmPath, report.info.name, rType, rFormat, os.application, overrides);
+                    if (id > 0) {
+                        return id;
+                    }
+                } catch (Exception e) {
+                    if (e instanceof HFMException) {
+                        throw (HFMException) e;
+                    }
+                    LOG.log(Level.FINE, "generateReport fallback to startReport for " + report.info.name, e);
+                }
+            }
+            SystemReport sr = new SystemReport()
+                    .setReportDefinition(report.code == null ? "" : report.code)
+                    .setReportTemplate(notBlank(request.stylesheet) ? request.stylesheet.trim() : "")
+                    .setOutputFormat(rFormat)
+                    .setReportType(rType);
+            int id = withRetry(() -> helper.startReport(os.info, sr));
+            if (id <= 0) {
+                throw new BackendException(Kind.HFM_ERROR, "HFM did not start report task for " + report.info.name);
+            }
+            return id;
+        } catch (HFMException e) {
+            throw classify(e, "run report " + report.info.name);
+        }
+    }
+
+    @Override
+    public Path fetchReportFile(BackendSession session, int taskId, Path directory, String fileName)
+            throws BackendException {
+        SessionInfo info = info(session);
+        try {
+            AdministrationOM admin = new AdministrationOM(info);
+            File file = withRetry(() -> admin.getRunningTaskFile(taskId));
+            if (file == null) {
+                throw new BackendException(Kind.HFM_ERROR, "HFM returned no output file for report task " + taskId);
+            }
+            List<Path> unpacked = FileUnpacker.unpack(file.getAbsoluteFile().toPath(), directory);
+            if (unpacked.isEmpty()) {
+                throw new BackendException(Kind.HFM_ERROR, "HFM report archive for task " + taskId + " was empty");
+            }
+            Path first = unpacked.get(0);
+            if (notBlank(fileName) && unpacked.size() == 1) {
+                Path target = directory.toAbsolutePath().normalize().resolve(fileName);
+                if (!first.equals(target)) {
+                    java.nio.file.Files.move(first, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    return target;
+                }
+            }
+            return first;
+        } catch (HFMException e) {
+            throw classify(e, "download report output of task " + taskId);
+        } catch (IOException e) {
+            throw new BackendException(Kind.HFM_ERROR,
+                    "Cannot save report output of task " + taskId + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void saveReport(BackendSession session, ReportDetail report, boolean overwrite) throws BackendException {
+        SessionInfo info = info(session);
+        ReportInfo ri = report.info;
+        DOCUMENTTYPES dt = toDocType(ri.reportType);
+        DOCUMENTFILETYPES ft = notBlank(ri.fileType) ? toFileType(ri.fileType) : DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_RPTDEF;
+        FMDocument doc = new FMDocument()
+                .setName(ri.name)
+                .setPath(toHfmDocPath(ri.folder))
+                .setDocType(dt)
+                .setFileType(ft)
+                .setDescription(ri.description == null ? "" : ri.description)
+                .setSecurityClass(notBlank(ri.securityClass) ? ri.securityClass : "[Default]")
+                .setIsPrivate(ri.isPrivate);
+        if (notBlank(ri.owner)) {
+            doc.setOwner(ri.owner);
+        }
+        if (ri.lastModified > 0) {
+            doc.setLastModified(ri.lastModified);
+        }
+        GenericDocument content = new GenericDocument();
+        content.setDocumentObjectFromContent(encodeBytes(report.code == null ? "" : report.code, report.encoding));
+        try {
+            DocumentOM om = new DocumentOM(info);
+            om.saveDocumentContent(doc, content, overwrite);
+        } catch (HFMException e) {
+            BackendException be = classify(e, "save report " + ri.name);
+            throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
+        }
+    }
+
+    private List<FMDocument> enumDocsAtPath(DocumentOM om, String normFolder, DOCUMENTTYPES dt,
+                                            DOCUMENTFILETYPES ft, ENUMSHOWPRIVATEDOCS priv)
+            throws HFMException, BackendException {
+        String primary = toHfmDocPath(normFolder);
+        try {
+            List<FMDocument> list = withRetry(() -> om.enumDocuments(primary, dt, ft, priv));
+            if (list != null && !list.isEmpty()) {
+                return list;
+            }
+        } catch (HFMException e) {
+            if (!"".equals(primary)) {
+                throw e;
+            }
+        }
+        if ("".equals(primary)) {
+            try {
+                List<FMDocument> alt = withRetry(() -> om.enumDocuments("Root", dt, ft, priv));
+                if (alt != null) {
+                    return alt;
+                }
+            } catch (HFMException ignored) {
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private FMDocument getDocInfoAtPath(DocumentOM om, String normFolder, String name, DOCUMENTTYPES dt,
+                                        DOCUMENTFILETYPES ft) throws HFMException, BackendException {
+        String primary = toHfmDocPath(normFolder);
+        try {
+            FMDocument doc = withRetry(() -> om.getDocumentInfo(primary, name, dt, ft));
+            if (doc != null) {
+                return doc;
+            }
+        } catch (HFMException e) {
+            if (!"".equals(primary)) {
+                throw e;
+            }
+        }
+        if ("".equals(primary)) {
+            try {
+                return withRetry(() -> om.getDocumentInfo("Root", name, dt, ft));
+            } catch (HFMException ignored) {
+            }
+        }
+        return null;
+    }
+
+    private byte[] getDocContentAtPath(DocumentOM om, String normFolder, String name, DOCUMENTTYPES dt,
+                                       DOCUMENTFILETYPES ft) throws HFMException, BackendException {
+        String primary = toHfmDocPath(normFolder);
+        try {
+            byte[] bytes = withRetry(() -> om.getDocumentContent(primary, name, dt, ft));
+            if (bytes != null) {
+                return bytes;
+            }
+        } catch (HFMException e) {
+            if (!"".equals(primary)) {
+                throw e;
+            }
+        }
+        if ("".equals(primary)) {
+            return withRetry(() -> om.getDocumentContent("Root", name, dt, ft));
+        }
+        return null;
+    }
+
+    private static String normalizeDocPath(String folder) {
+        if (folder == null || folder.trim().isEmpty() || "/".equals(folder.trim())) {
+            return "Root";
+        }
+        String f = folder.trim().replace('\\', '/');
+        while (f.startsWith("/")) {
+            f = f.substring(1);
+        }
+        while (f.endsWith("/")) {
+            f = f.substring(0, f.length() - 1);
+        }
+        return f.isEmpty() || "root".equalsIgnoreCase(f) ? "Root" : f;
+    }
+
+    private static String toHfmDocPath(String folder) {
+        String norm = normalizeDocPath(folder);
+        return "Root".equalsIgnoreCase(norm) ? "" : norm;
+    }
+
+    private static String displayFolder(String folder) {
+        return notBlank(folder) ? folder : "Root";
+    }
+
+    private static ReportInfo toReportInfo(FMDocument d, String defaultFolder) {
+        String folder = notBlank(d.getPath()) ? normalizeDocPath(d.getPath()) : displayFolder(defaultFolder);
+        return new ReportInfo(
+                d.getName(),
+                fromDocType(d.getDocType()),
+                fromFileType(d.getFileType()),
+                folder,
+                d.getDescription(),
+                d.getSecurityClass(),
+                d.isIsPrivate(),
+                d.getOwner(),
+                d.getLastModified());
+    }
+
+    private static DOCUMENTTYPES toDocType(String reportType) throws BackendException {
+        if (reportType == null || reportType.trim().isEmpty()) {
+            throw new BackendException(Kind.BAD_REQUEST, "reportType is required");
+        }
+        String key = reportType.trim().toUpperCase(Locale.ROOT);
+        DOCUMENTTYPES dt = REPORT_DOC_TYPES.get(key);
+        if (dt != null) {
+            return dt;
+        }
+        for (DOCUMENTTYPES c : DOCUMENTTYPES.values()) {
+            if (c.name().equalsIgnoreCase(key) || c.name().equalsIgnoreCase("WEBOM_DOCTYPE_" + key)
+                    || c.name().equalsIgnoreCase("WEBOM_DOCTYPE_RPT" + key.replace("_", ""))) {
+                return c;
+            }
+        }
+        throw new BackendException(Kind.BAD_REQUEST, "Unknown reportType '" + reportType + "'; expected one of "
+                + String.join(", ", REPORT_DOC_TYPES.keySet()));
+    }
+
+    private static String fromDocType(DOCUMENTTYPES dt) {
+        if (dt == null) {
+            return "UNKNOWN";
+        }
+        for (Map.Entry<String, DOCUMENTTYPES> e : REPORT_DOC_TYPES.entrySet()) {
+            if (e.getValue() == dt) {
+                return e.getKey();
+            }
+        }
+        String n = dt.name();
+        return n.startsWith("WEBOM_DOCTYPE_") ? n.substring("WEBOM_DOCTYPE_".length()) : n;
+    }
+
+    private static DOCUMENTFILETYPES toFileType(String fileType) throws BackendException {
+        if (!notBlank(fileType)) {
+            return DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_RPTDEF;
+        }
+        String key = fileType.trim().toUpperCase(Locale.ROOT);
+        for (DOCUMENTFILETYPES ft : DOCUMENTFILETYPES.values()) {
+            if (ft.name().equalsIgnoreCase(key) || ft.name().equalsIgnoreCase("WEBOM_DOCFILETYPE_" + key)) {
+                return ft;
+            }
+        }
+        throw new BackendException(Kind.BAD_REQUEST, "Unknown report fileType '" + fileType + "'");
+    }
+
+    private static String fromFileType(DOCUMENTFILETYPES ft) {
+        if (ft == null) {
+            return "RPTDEF";
+        }
+        String n = ft.name();
+        return n.startsWith("WEBOM_DOCFILETYPE_") ? n.substring("WEBOM_DOCFILETYPE_".length()) : n;
+    }
+
+    private static REPORT_TYPES toSystemReportType(String reportType) {
+        if (!notBlank(reportType)) {
+            return REPORT_TYPES.JOURNAL_REPORT;
+        }
+        String key = reportType.trim().toUpperCase(Locale.ROOT);
+        switch (key) {
+            case "JOURNAL":
+                return REPORT_TYPES.JOURNAL_REPORT;
+            case "INTERCOMPANY":
+            case "IC_MATCHING_TEMPLATE":
+                return REPORT_TYPES.SYSTEM_MATCHING_REPORT;
+            case "IC_MATCH_BY_ACCOUNT":
+                return REPORT_TYPES.ICM_REPORT_TYPE_ACCOUNT;
+            case "IC_MATCH_BY_TRANS_ID":
+                return REPORT_TYPES.ICM_REPORT_TYPE_ID;
+            case "IC_TRANSACTION":
+            case "IC_MONITOR":
+                return REPORT_TYPES.ICM_REPORT_TYPE_TRANSACTION;
+            default:
+                for (REPORT_TYPES rt : REPORT_TYPES.values()) {
+                    if (rt.name().equalsIgnoreCase(key)) {
+                        return rt;
+                    }
+                }
+                return REPORT_TYPES.JOURNAL_REPORT;
+        }
+    }
+
+    private static REPORT_FORMATS toSystemReportFormat(String format) throws BackendException {
+        if (!notBlank(format)) {
+            return REPORT_FORMATS.HTML_FORMAT;
+        }
+        String key = format.trim().toUpperCase(Locale.ROOT);
+        for (REPORT_FORMATS rf : REPORT_FORMATS.values()) {
+            if (rf.name().equalsIgnoreCase(key) || rf.name().equalsIgnoreCase(key + "_FORMAT")) {
+                return rf;
+            }
+        }
+        throw new BackendException(Kind.BAD_REQUEST, "Unsupported report format '" + format + "'");
+    }
+
+    private static final class DecodedText {
+        final String text;
+        final String encoding;
+
+        DecodedText(String text, String encoding) {
+            this.text = text;
+            this.encoding = encoding;
+        }
+    }
+
+    private static DecodedText decodeBytes(byte[] bytes) {
+        if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xFE) {
+            return new DecodedText(new String(bytes, 2, bytes.length - 2, java.nio.charset.StandardCharsets.UTF_16LE),
+                    "UTF-16LE");
+        }
+        if (bytes.length >= 2 && (bytes[0] & 0xFF) == 0xFE && (bytes[1] & 0xFF) == 0xFF) {
+            return new DecodedText(new String(bytes, 2, bytes.length - 2, java.nio.charset.StandardCharsets.UTF_16BE),
+                    "UTF-16BE");
+        }
+        if (bytes.length >= 3 && (bytes[0] & 0xFF) == 0xEF && (bytes[1] & 0xFF) == 0xBB && (bytes[2] & 0xFF) == 0xBF) {
+            return new DecodedText(new String(bytes, 3, bytes.length - 3, java.nio.charset.StandardCharsets.UTF_8),
+                    "UTF-8-BOM");
+        }
+        return new DecodedText(new String(bytes, java.nio.charset.StandardCharsets.UTF_8), "UTF-8");
+    }
+
+    private static byte[] encodeBytes(String text, String encoding) {
+        if ("UTF-16LE".equalsIgnoreCase(encoding)) {
+            byte[] body = text.getBytes(java.nio.charset.StandardCharsets.UTF_16LE);
+            byte[] out = new byte[body.length + 2];
+            out[0] = (byte) 0xFF;
+            out[1] = (byte) 0xFE;
+            System.arraycopy(body, 0, out, 2, body.length);
+            return out;
+        }
+        if ("UTF-16BE".equalsIgnoreCase(encoding)) {
+            byte[] body = text.getBytes(java.nio.charset.StandardCharsets.UTF_16BE);
+            byte[] out = new byte[body.length + 2];
+            out[0] = (byte) 0xFE;
+            out[1] = (byte) 0xFF;
+            System.arraycopy(body, 0, out, 2, body.length);
+            return out;
+        }
+        if ("UTF-8-BOM".equalsIgnoreCase(encoding)) {
+            byte[] body = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            byte[] out = new byte[body.length + 3];
+            out[0] = (byte) 0xEF;
+            out[1] = (byte) 0xBB;
+            out[2] = (byte) 0xBF;
+            System.arraycopy(body, 0, out, 3, body.length);
+            return out;
+        }
+        return text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     // ---------------------------------------------------------------- helpers

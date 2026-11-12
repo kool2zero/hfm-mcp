@@ -88,3 +88,50 @@ async def test_other_errors_carry_code():
     with pytest.raises(DaemonError) as e:
         await c.post("/api/v1/cells", {})
     assert e.value.code == "too_many_cells"
+
+
+async def test_report_tools_wiring():
+    from hfm_mcp.server import build_server
+
+    calls: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        body = json.loads(request.content) if request.content else {}
+        if request.url.path == "/api/v1/sessions":
+            return httpx.Response(200, json={"sessionId": "s1", "user": "jdoe", "application": "DEMO"})
+        calls.append((request.url.path, body))
+        return httpx.Response(200, json={"ok": True, "path": request.url.path, "body": body})
+
+    c = DaemonClient(SETTINGS, lambda: "secret", transport=httpx.MockTransport(handler))
+
+    # Read-only server exposes list/get/view reports, not preview_report_save
+    ro_srv = build_server(c, enable_actions=False)
+    ro_tools = {t.name for t in await ro_srv.list_tools()}
+    assert {"hfm_list_reports", "hfm_get_report", "hfm_view_report"} <= ro_tools
+    assert "hfm_preview_report_save" not in ro_tools
+
+    # Actions enabled without REPORT_SAVE removes hfm_preview_report_save
+    no_save_srv = build_server(c, enable_actions=True, allowed_actions={"START"})
+    assert "hfm_preview_report_save" not in {t.name for t in await no_save_srv.list_tools()}
+
+    # Actions enabled with REPORT_SAVE offers hfm_preview_report_save
+    rw_srv = build_server(c, enable_actions=True, allowed_actions={"REPORT_SAVE"})
+    rw_tools = {t.name for t in await rw_srv.list_tools()}
+    assert "hfm_preview_report_save" in rw_tools
+
+    await rw_srv.call_tool("hfm_list_reports", {"report_type": ["JOURNAL"], "query": "monthly"})
+    await rw_srv.call_tool("hfm_get_report", {"name": "MonthlyJournals", "report_type": "JOURNAL"})
+    await rw_srv.call_tool("hfm_view_report", {"name": "MonthlyJournals", "format": "HTML", "pov": {"Period": "Dec"}})
+    await rw_srv.call_tool("hfm_preview_report_save", {
+        "name": "MonthlyJournals", "sections": {"Filter": {"Status": "WORKING"}}, "description": "Updated"})
+
+    assert [p for p, _ in calls] == [
+        "/api/v1/reports/list",
+        "/api/v1/reports/get",
+        "/api/v1/reports/view",
+        "/api/v1/reports/preview-save",
+    ]
+    assert calls[0][1] == {"reportTypes": ["JOURNAL"], "folder": None, "query": "monthly", "includePrivate": True}
+    assert calls[3][1]["sections"] == {"Filter": {"Status": "WORKING"}}

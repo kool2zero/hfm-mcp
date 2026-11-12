@@ -57,10 +57,16 @@ public final class ActionService {
     private final AuditLog audit;
     private final SecureRandom random = new SecureRandom();
     private final JournalService journals;
+    private final ReportService reports;
 
     /** Journal plans share the plan store and the execute call; execute routes them to this service. */
     public JournalService journals() {
         return journals;
+    }
+
+    /** Report plans share the plan store and the execute call; execute routes them to this service. */
+    public ReportService reports() {
+        return reports;
     }
 
     public ActionService(HfmBackend backend, HfmService hfm, DaemonConfig config, AuditLog audit) {
@@ -69,6 +75,7 @@ public final class ActionService {
         this.config = config;
         this.audit = audit;
         this.journals = new JournalService(backend, hfm, config, audit);
+        this.reports = new ReportService(backend, hfm, config, audit);
     }
 
     // ---------------------------------------------------------------- status (read-only)
@@ -213,6 +220,9 @@ public final class ActionService {
         Object o = planId == null ? null : s.actionPlans().remove(planId);
         if (JournalService.owns(o)) {
             return journals.execute(s, o);
+        }
+        if (ReportService.owns(o)) {
+            return reports.execute(s, o);
         }
         if (!(o instanceof Plan) || expired((Plan) o)) {
             throw new ApiException(404, "plan_not_found",

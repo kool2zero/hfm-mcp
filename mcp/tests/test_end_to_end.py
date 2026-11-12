@@ -82,7 +82,15 @@ async def test_tools_over_stdio(daemon_url):
             names = {t.name for t in (await session.list_tools()).tools}
             assert names == {"hfm_get_dimensions", "hfm_get_members", "hfm_search_members", "hfm_get_data",
                              "hfm_get_process_status", "hfm_validate_pov", "hfm_list_journals",
-                             "hfm_get_journal"}, "action tools only appear with HFM_ENABLE_ACTIONS"
+                             "hfm_get_journal", "hfm_list_reports", "hfm_get_report",
+                             "hfm_view_report"}, "action tools only appear with HFM_ENABLE_ACTIONS"
+
+            reports = payload(await session.call_tool("hfm_list_reports", {"report_type": ["JOURNAL"]}))
+            assert [r["name"] for r in reports["reports"]] == ["MonthlyJournals"]
+            report = payload(await session.call_tool("hfm_get_report", {"name": "MonthlyJournals"}))
+            assert report["reportType"] == "JOURNAL" and "[PointOfView]" in report["code"]
+            rendered = payload(await session.call_tool("hfm_view_report", {"name": "MonthlyJournals"}))
+            assert rendered["finished"] and "ADJ001" in rendered["content"]
 
             journals = payload(await session.call_tool("hfm_list_journals", {
                 "pov": {"Scenario": "Actual", "Year": "2025", "Period": "Dec"}, "status": ["WORKING"]}))
@@ -137,8 +145,9 @@ async def test_preview_then_execute_over_stdio(daemon_url):
             assert action["enum"] == ["START", "CONSOLIDATE"], action
             assert "APPROVE" not in action["description"]
             assert "action" in tools["hfm_preview_action"].input_schema["required"]
-            # The daemon's allowlist has no JOURNAL_* entries, so no journal change tool is offered.
-            assert not {"hfm_preview_journal_save", "hfm_preview_journal_action"} & tools.keys()
+            # The daemon's allowlist has no JOURNAL_* or REPORT_SAVE entries, so no journal/report change tool is offered.
+            assert not {"hfm_preview_journal_save", "hfm_preview_journal_action",
+                        "hfm_preview_report_save"} & tools.keys()
 
             pov = {"Scenario": "Actual", "Year": "2025", "Period": "Nov"}
             before = payload(await session.call_tool("hfm_get_process_status",
