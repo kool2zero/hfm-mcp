@@ -719,7 +719,13 @@ public final class ReportService {
                 axisMap.put(key, summary.toString());
             }
             if (!axisMap.isEmpty()) {
-                sections.put(gridPrefix + (isRow ? "Rows" : "Columns"), axisMap);
+                String baseKey = isRow ? "Rows" : "Columns";
+                if (gridPrefix.isEmpty() || !sections.containsKey(baseKey)) {
+                    sections.put(baseKey, axisMap);
+                }
+                if (!gridPrefix.isEmpty()) {
+                    sections.put(gridPrefix + baseKey, axisMap);
+                }
             }
         }
     }
@@ -746,16 +752,67 @@ public final class ReportService {
         return all.isEmpty() ? "" : String.join(", ", all);
     }
 
+    private static final java.util.regex.Pattern SQL_MEMBER_EXPR = java.util.regex.Pattern.compile(
+            "(?i)WHERE\\s+([A-Za-z0-9_]+)\\(\\s*\"([^\"]+)\"");
+    private static final java.util.regex.Pattern XML_FILTER_OP = java.util.regex.Pattern.compile(
+            "<COMPOSITEOPERATION\\s+TYPE=\"Filter\">(.*?)</COMPOSITEOPERATION>", java.util.regex.Pattern.DOTALL);
+    private static final java.util.regex.Pattern XML_OP = java.util.regex.Pattern.compile(
+            "<OPERATION\\s+TYPE=\"([^\"]+)\">(.*?)</OPERATION>", java.util.regex.Pattern.DOTALL);
+    private static final java.util.regex.Pattern XML_STRING = java.util.regex.Pattern.compile(
+            "<STRING>(.*?)</STRING>", java.util.regex.Pattern.DOTALL);
+
     private static List<String> allMetadataExpressions(org.w3c.dom.Element parent) {
         List<String> out = new ArrayList<>();
         org.w3c.dom.NodeList nl = parent.getElementsByTagName("METADATAEXPRESSION");
         for (int i = 0; i < nl.getLength(); i++) {
             String v = ((org.w3c.dom.Element) nl.item(i)).getAttribute("VALUE");
             if (!blank(v)) {
-                out.add(v);
+                out.add(cleanMetadataExpression(v));
             }
         }
         return out;
+    }
+
+    private static String cleanMetadataExpression(String raw) {
+        String t = raw.trim();
+        if (t.startsWith("<?xml") || t.startsWith("<COMPOSITEOPERATION")) {
+            java.util.regex.Matcher fm = XML_FILTER_OP.matcher(t);
+            String scope = fm.find() ? fm.group(1) : t;
+            java.util.regex.Matcher om = XML_OP.matcher(scope);
+            List<String> parts = new ArrayList<>();
+            while (om.find()) {
+                String opType = om.group(1);
+                if ("Select".equalsIgnoreCase(opType)) {
+                    continue;
+                }
+                List<String> args = new ArrayList<>();
+                java.util.regex.Matcher sm = XML_STRING.matcher(om.group(2));
+                while (sm.find()) {
+                    args.add(sm.group(1).trim());
+                }
+                if (args.size() > 1) {
+                    // Last STRING in FR MemberQuery Filter operations is the dimension name
+                    args.remove(args.size() - 1);
+                }
+                if ("Member".equalsIgnoreCase(opType) && args.size() == 1) {
+                    parts.add(args.get(0));
+                } else if (!args.isEmpty()) {
+                    parts.add(opType + "(" + String.join(", ", args) + ")");
+                }
+            }
+            if (!parts.isEmpty()) {
+                return String.join(", ", parts);
+            }
+        }
+        if (t.toUpperCase(Locale.ROOT).startsWith("SELECT ")) {
+            java.util.regex.Matcher m = SQL_MEMBER_EXPR.matcher(t);
+            if (m.find()) {
+                String fn = m.group(1);
+                String member = m.group(2);
+                return "Member".equalsIgnoreCase(fn) ? member : (fn + "(" + member + ")");
+            }
+        }
+        return t;
     }
 
     private static String extractCustomHeading(org.w3c.dom.Element cell) {
