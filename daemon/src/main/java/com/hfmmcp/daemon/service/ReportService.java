@@ -44,16 +44,19 @@ public final class ReportService {
 
     private static final Set<String> REPORT_TYPES = new HashSet<>(Arrays.asList(
             "JOURNAL", "INTERCOMPANY", "IC_MATCHING_TEMPLATE", "IC_TRANSACTION", "IC_MONITOR",
-            "IC_MATCH_BY_ACCOUNT", "IC_MATCH_BY_TRANS_ID", "DATA_EXPLORER", "HYP"));
+            "IC_MATCH_BY_ACCOUNT", "IC_MATCH_BY_TRANS_ID", "DATA_EXPLORER", "HYP",
+            "FR_REPORT", "FR_BOOK", "FR_SNAPSHOT_BOOK", "FR_SNAPSHOT_REPORT",
+            "FR_BATCH", "FR_GRID", "FR_ROW_COLUMN", "FR_TEXT", "FOLDER"));
 
     private static final Set<String> FILE_TYPES = new HashSet<>(Arrays.asList(
-            "RPTDEF", "RPTXML", "RPTHTML", "XML", "CUSTOM"));
+            "RPTDEF", "RPTXML", "RPTHTML", "XML", "CUSTOM",
+            "DES", "KBK", "KBT", "RPT", "BCH", "ROG", "ROS", "ROT", "FOLDER"));
 
     private static final Set<String> REPORT_FORMATS = new HashSet<>(Arrays.asList(
             "HTML", "HFM", "PDF", "RTF", "XLS", "XLSX"));
 
     private static final int MAX_ROWS = 500;
-    private static final int MAX_CODE_CHARS = 250_000;
+    private static final int MAX_CODE_CHARS = 5_000_000;
 
     static final class Plan {
         final String id;
@@ -94,11 +97,15 @@ public final class ReportService {
         List<String> types = checkChoices("reportType", reportTypes, REPORT_TYPES);
         boolean incPriv = includePrivate == null || includePrivate;
         ReportQuery rq = new ReportQuery(types, folder, query, incPriv);
-        List<ReportInfo> found = hfm.withSession(s, bs -> backend.listReports(bs, rq));
+        List<ReportInfo> found = new ArrayList<>(hfm.withSession(s, bs -> backend.listReports(bs, rq)));
         Map<String, Integer> byType = new TreeMap<>();
+        Set<String> folders = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (ReportInfo r : found) {
             byType.merge(r.reportType == null ? "UNKNOWN" : r.reportType, 1, Integer::sum);
+            if (!blank(r.folder)) {
+                folders.add(r.folder);
+            }
             if (rows.size() < MAX_ROWS) {
                 rows.add(summaryMap(r));
             }
@@ -110,6 +117,7 @@ public final class ReportService {
             out.put("truncated", true);
         }
         out.put("byType", byType);
+        out.put("folders", new ArrayList<>(folders));
         out.put("reports", rows);
         return out;
     }
@@ -118,8 +126,11 @@ public final class ReportService {
         if (blank(name)) {
             throw ApiException.badRequest("bad_request", "name is required");
         }
+        String[] split = splitFolderAndName(folder, name.trim());
+        String effectiveFolder = split[0];
+        String effectiveName = split[1];
         String rType = checkOptionalChoice("reportType", reportType, REPORT_TYPES);
-        ReportDetail d = hfm.withSession(s, bs -> backend.getReport(bs, folder, name.trim(), rType));
+        ReportDetail d = hfm.withSession(s, bs -> backend.getReport(bs, effectiveFolder, effectiveName, rType));
         Map<String, Object> out = summaryMap(d.info);
         String code = d.code == null ? "" : d.code;
         out.put("encoding", d.encoding == null ? "UTF-8" : d.encoding);
@@ -135,13 +146,19 @@ public final class ReportService {
         if (blank(name)) {
             throw ApiException.badRequest("bad_request", "name is required");
         }
+        String[] split = splitFolderAndName(folder, name.trim());
+        String effectiveFolder = split[0];
+        String effectiveName = split[1];
         String rType = checkOptionalChoice("reportType", reportType, REPORT_TYPES);
         String fmt = blank(format) ? "HTML" : checkChoice("format", format, REPORT_FORMATS);
-        ReportDetail detail = hfm.withSession(s, bs -> backend.getReport(bs, folder, name.trim(), rType));
+        ReportDetail detail = hfm.withSession(s, bs -> backend.getReport(bs, effectiveFolder, effectiveName, rType));
 
         String povSlice = buildPovSlice(s, pov, slice);
         if (!blank(entity)) {
             hfm.expand(s, hfm.resolver(s).resolve("Entity"), entity.trim());
+        }
+        if (isFrObject(detail)) {
+            return viewFrObject(detail, fmt, povSlice, entity, partner);
         }
         ReportRunRequest req = new ReportRunRequest(fmt, povSlice, blank(entity) ? null : entity.trim(),
                 blank(partner) ? null : partner.trim(), blank(stylesheet) ? null : stylesheet.trim());
@@ -198,24 +215,35 @@ public final class ReportService {
         if (blank(name)) {
             throw ApiException.badRequest("bad_request", "name is required");
         }
-        String trimmedName = name.trim();
+        String rawName = name.trim();
+        if (rawName.contains("..") || (folder != null && folder.contains(".."))) {
+            throw ApiException.badRequest("bad_request", "name and folder must not contain '..'");
+        }
+        if (rawName.contains("/") || rawName.contains("\\")) {
+            if (!blank(folder) && !"Root".equalsIgnoreCase(normalizeFolder(folder))) {
+                throw ApiException.badRequest("bad_request", "name must not contain path separators when folder is specified");
+            }
+        }
+        String[] split = splitFolderAndName(folder, rawName);
+        String splitFolder = split[0];
+        String trimmedName = split[1];
         if (trimmedName.contains("/") || trimmedName.contains("\\") || trimmedName.contains("..")) {
             throw ApiException.badRequest("bad_request", "name must not contain path separators or '..'");
         }
         String rType = checkOptionalChoice("reportType", reportType, REPORT_TYPES);
         String fType = checkOptionalChoice("fileType", fileType, FILE_TYPES);
 
-        ReportDetail existing = findExisting(s, folder, trimmedName, rType);
+        ReportDetail existing = findExisting(s, splitFolder, trimmedName, rType);
         if (existing == null && rType == null) {
             throw ApiException.badRequest("bad_request",
                     "reportType is required when creating a new report (one of "
                             + String.join(", ", REPORT_TYPES) + ")");
         }
         String effectiveType = rType != null ? rType : existing.info.reportType;
-        String effectiveFileType = fType != null ? fType : (existing != null ? existing.info.fileType : "RPTDEF");
-        String effectiveFolder = !blank(folder)
-                ? normalizeFolder(folder)
-                : (existing != null ? existing.info.folder : "Root");
+        String effectiveFileType = fType != null ? fType : (existing != null ? existing.info.fileType : defaultFileTypeFor(effectiveType));
+        String effectiveFolder = existing != null && (blank(splitFolder) || "Root".equalsIgnoreCase(normalizeFolder(splitFolder)))
+                ? existing.info.folder
+                : (!blank(splitFolder) ? normalizeFolder(splitFolder) : "Root");
         String effectiveDesc = description != null
                 ? description
                 : (existing != null && existing.info.description != null ? existing.info.description : "");
@@ -225,7 +253,9 @@ public final class ReportService {
         boolean effectivePriv = isPrivate != null
                 ? isPrivate
                 : (existing != null && existing.info.isPrivate);
-        String effectiveEncoding = existing != null && !blank(existing.encoding) ? existing.encoding : "UTF-8";
+        String effectiveEncoding = existing != null && !blank(existing.encoding)
+                ? existing.encoding
+                : defaultEncodingFor(effectiveType);
 
         String baseCode;
         if (code != null) {
@@ -248,7 +278,7 @@ public final class ReportService {
         }
 
         Map<String, Map<String, String>> parsedSections = parseSections(finalCode);
-        List<String> warnings = validateSectionPov(s, parsedSections);
+        List<String> warnings = validateSectionPov(s, parsedSections, isXmlReportCode(finalCode));
 
         ReportInfo info = new ReportInfo(trimmedName, effectiveType, effectiveFileType, effectiveFolder,
                 effectiveDesc, effectiveSec, effectivePriv, s.userName(), System.currentTimeMillis());
@@ -352,7 +382,7 @@ public final class ReportService {
         return null;
     }
 
-    private List<String> validateSectionPov(UserSession s, Map<String, Map<String, String>> sections) {
+    private List<String> validateSectionPov(UserSession s, Map<String, Map<String, String>> sections, boolean isXml) {
         List<String> warnings = new ArrayList<>();
         Map<String, String> povSection = null;
         for (Map.Entry<String, Map<String, String>> e : sections.entrySet()) {
@@ -370,9 +400,14 @@ public final class ReportService {
             if (blank(e.getValue())) {
                 continue;
             }
+            String val = e.getValue().trim();
+            // Skip FR prompt/function expressions like "$Prompt for Entity$", "Same As", "Descendants(...)"
+            if (isXml && (val.contains("$") || val.contains("(") || val.contains(" ") || val.contains(","))) {
+                continue;
+            }
             try {
                 DimensionInfo d = r.resolve(e.getKey());
-                toCheck.put(d.prefix(), e.getValue().trim());
+                toCheck.put(d.prefix(), val);
             } catch (ApiException ignored) {
             }
         }
@@ -387,11 +422,34 @@ public final class ReportService {
         return warnings;
     }
 
-    /** Parses an INI/section-formatted HFM report script into section -> key -> value. */
+    private static boolean isXmlReportCode(String code) {
+        return code != null && code.trim().startsWith("<");
+    }
+
+    private static boolean isFrObject(ReportDetail detail) {
+        if (detail == null) {
+            return false;
+        }
+        String rt = detail.info != null && detail.info.reportType != null
+                ? detail.info.reportType.toUpperCase(Locale.ROOT)
+                : "";
+        return rt.startsWith("FR_") || isXmlReportCode(detail.code);
+    }
+
+    /**
+     * Parses an INI/section-formatted HFM report script or a Financial Reporting XML definition
+     * ({@code <DESIGN>} / {@code <BOOK>}) into section -> key -> value.
+     */
     static Map<String, Map<String, String>> parseSections(String code) {
         Map<String, Map<String, String>> sections = new LinkedHashMap<>();
         if (blank(code)) {
             return sections;
+        }
+        if (isXmlReportCode(code)) {
+            Map<String, Map<String, String>> xmlSections = parseFrXmlSections(code);
+            if (!xmlSections.isEmpty()) {
+                return xmlSections;
+            }
         }
         String current = "General";
         for (String raw : code.split("\\r?\\n")) {
@@ -414,8 +472,421 @@ public final class ReportService {
         return sections;
     }
 
+    private static Map<String, Map<String, String>> parseFrXmlSections(String xml) {
+        Map<String, Map<String, String>> sections = new LinkedHashMap<>();
+        try {
+            javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            dbf.setXIncludeAware(false);
+            dbf.setExpandEntityReferences(false);
+            org.w3c.dom.Document doc = dbf.newDocumentBuilder().parse(
+                    new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+            org.w3c.dom.Element root = doc.getDocumentElement();
+            if (root == null) {
+                return sections;
+            }
+            String rootTag = root.getTagName().toUpperCase(Locale.ROOT);
+            Map<String, String> general = new LinkedHashMap<>();
+            sections.put("General", general);
+
+            if ("BOOK".equals(rootTag)) {
+                putAttrIfNotEmpty(general, "Name", root, "NAME");
+                putAttrIfNotEmpty(general, "ReportDescription", root, "REPORT_DESCRIPTION");
+                putAttrIfNotEmpty(general, "Version", root, "VERSION");
+
+                Map<String, String> pov = new LinkedHashMap<>();
+                org.w3c.dom.NodeList bookPovs = root.getElementsByTagName("BOOK_POV");
+                for (int i = 0; i < bookPovs.getLength(); i++) {
+                    org.w3c.dom.Element bp = (org.w3c.dom.Element) bookPovs.item(i);
+                    org.w3c.dom.NodeList dsList = bp.getElementsByTagName("DATASOURCE");
+                    if (dsList.getLength() > 0) {
+                        org.w3c.dom.Element ds = (org.w3c.dom.Element) dsList.item(0);
+                        putAttrIfNotEmpty(general, "DatasourceName", ds, "DATASOURCE_NAME");
+                        putAttrIfNotEmpty(general, "DatasourceType", ds, "DATASOURCE_TYPE");
+                    }
+                    org.w3c.dom.NodeList dims = bp.getElementsByTagName("DIMENSION");
+                    for (int d = 0; d < dims.getLength(); d++) {
+                        org.w3c.dom.Element dim = (org.w3c.dom.Element) dims.item(d);
+                        String dimName = dim.getAttribute("NAME");
+                        String expr = firstMetadataExpression(dim);
+                        if (!blank(dimName) && !blank(expr)) {
+                            pov.put(dimName, expr);
+                        }
+                    }
+                }
+                if (!pov.isEmpty()) {
+                    sections.put("PointOfView", pov);
+                }
+
+                Map<String, String> chapters = new LinkedHashMap<>();
+                org.w3c.dom.NodeList chapList = root.getElementsByTagName("CHAPTER");
+                general.put("ChapterCount", Integer.toString(chapList.getLength()));
+                for (int c = 0; c < chapList.getLength(); c++) {
+                    org.w3c.dom.Element ch = (org.w3c.dom.Element) chapList.item(c);
+                    String repName = ch.getAttribute("REPORTNAME");
+                    if (blank(repName)) {
+                        repName = ch.getAttribute("NAME");
+                    }
+                    List<String> memOverrides = new ArrayList<>();
+                    org.w3c.dom.NodeList dims = ch.getElementsByTagName("DIMENSION");
+                    for (int d = 0; d < dims.getLength(); d++) {
+                        org.w3c.dom.Element dim = (org.w3c.dom.Element) dims.item(d);
+                        String dimName = dim.getAttribute("NAME");
+                        String expr = firstMetadataExpression(dim);
+                        if (!blank(dimName) && !blank(expr)) {
+                            memOverrides.add(dimName + "=" + expr);
+                        }
+                    }
+                    String val = repName + (memOverrides.isEmpty() ? "" : " [" + String.join(", ", memOverrides) + "]");
+                    chapters.put("Chapter " + (c + 1), val);
+                }
+                if (!chapters.isEmpty()) {
+                    sections.put("Chapters", chapters);
+                }
+                return sections;
+            }
+
+            // Default: <DESIGN> or <GRIDOBJECT> / <ROWANDCOLUMNTEMPLATE> / <TEXTOBJECT>
+            putAttrIfNotEmpty(general, "Name", root, "DESIGNNAME");
+            putAttrIfNotEmpty(general, "ReportDescription", root, "REPORT_DESCRIPTION");
+            putAttrIfNotEmpty(general, "Version", root, "VERSION");
+
+            // Extract Header / Footer text views
+            Map<String, String> headerText = new LinkedHashMap<>();
+            org.w3c.dom.NodeList textViews = root.getElementsByTagName("TEXTVIEW");
+            for (int i = 0; i < textViews.getLength(); i++) {
+                org.w3c.dom.Element tv = (org.w3c.dom.Element) textViews.item(i);
+                String txt = tv.getAttribute("DESIGN_NON_RTF_TEXT");
+                if (!blank(txt)) {
+                    headerText.put("Text " + (i + 1), txt.replaceAll("\\r?\\n", " | ").trim());
+                }
+            }
+            if (!headerText.isEmpty()) {
+                sections.put("Header", headerText);
+            }
+
+            // Extract POV
+            Map<String, String> pov = new LinkedHashMap<>();
+            org.w3c.dom.NodeList povNodes = root.getElementsByTagName("POV");
+            for (int i = 0; i < povNodes.getLength(); i++) {
+                org.w3c.dom.Element povEl = (org.w3c.dom.Element) povNodes.item(i);
+                org.w3c.dom.NodeList dims = povEl.getElementsByTagName("DIMENSION");
+                for (int d = 0; d < dims.getLength(); d++) {
+                    org.w3c.dom.Element dim = (org.w3c.dom.Element) dims.item(d);
+                    String dimName = dim.getAttribute("NAME");
+                    String expr = firstMetadataExpression(dim);
+                    if (!blank(dimName) && !blank(expr) && !pov.containsKey(dimName)) {
+                        pov.put(dimName, expr);
+                    }
+                }
+            }
+            if (!pov.isEmpty()) {
+                sections.put("PointOfView", pov);
+            }
+
+            // Extract Grids (Row & Column axes and formulas)
+            org.w3c.dom.NodeList grids = root.getElementsByTagName("GRIDOBJECT");
+            if (grids.getLength() == 0 && "GRIDOBJECT".equals(rootTag)) {
+                grids = doc.getElementsByTagName("GRIDOBJECT");
+            }
+            general.put("GridCount", Integer.toString(grids.getLength()));
+            for (int g = 0; g < grids.getLength(); g++) {
+                org.w3c.dom.Element grid = (org.w3c.dom.Element) grids.item(g);
+                String gridPrefix = grids.getLength() > 1 ? "Grid" + (g + 1) + "_" : "";
+                putAttrIfNotEmpty(general, gridPrefix + "AliasTable", grid, "ALIASTABLE");
+                putAttrIfNotEmpty(general, gridPrefix + "RowCount", grid, "ROW_COUNT");
+                putAttrIfNotEmpty(general, gridPrefix + "ColumnCount", grid, "COLUMN_COUNT");
+                String dsDetails = grid.getAttribute("DATASOURCE_DETAILS");
+                if (!blank(dsDetails)) {
+                    int c1 = dsDetails.indexOf(':');
+                    if (c1 > 0) {
+                        String after1 = dsDetails.substring(c1 + 1);
+                        int c2 = after1.indexOf(':');
+                        if (c2 > 0) {
+                            general.put(gridPrefix + "DatasourceName", after1.substring(0, c2));
+                        }
+                    }
+                }
+                extractGridAxisSections(grid, gridPrefix, sections);
+            }
+        } catch (Exception ignored) {
+        }
+        return sections;
+    }
+
+    private static void extractGridAxisSections(org.w3c.dom.Element grid, String gridPrefix,
+                                                Map<String, Map<String, String>> sections) {
+        Map<Integer, String> rowFormulas = new LinkedHashMap<>();
+        Map<Integer, String> colFormulas = new LinkedHashMap<>();
+        Map<Integer, String> rowCustomHeadings = new LinkedHashMap<>();
+        Map<Integer, String> colCustomHeadings = new LinkedHashMap<>();
+
+        org.w3c.dom.NodeList cells = grid.getElementsByTagName("GRIDCELL");
+        for (int i = 0; i < cells.getLength(); i++) {
+            org.w3c.dom.Element cell = (org.w3c.dom.Element) cells.item(i);
+            int rowIdx = parseIntSafe(cell.getAttribute("ROW"), -1);
+            int colIdx = parseIntSafe(cell.getAttribute("COLUMN"), -1);
+            String cellType = cell.getAttribute("TYPE");
+            org.w3c.dom.NodeList derived = cell.getElementsByTagName("DERIVEDEXPRESSION");
+            String formula = derived.getLength() > 0
+                    ? ((org.w3c.dom.Element) derived.item(0)).getAttribute("VALUE")
+                    : "";
+            String heading = extractCustomHeading(cell);
+            if ("row".equalsIgnoreCase(cellType) && rowIdx >= 0) {
+                if (!blank(formula)) {
+                    rowFormulas.put(rowIdx, formula);
+                }
+                if (!blank(heading)) {
+                    rowCustomHeadings.put(rowIdx, heading);
+                }
+            } else if ("column".equalsIgnoreCase(cellType) && colIdx >= 0) {
+                if (!blank(formula)) {
+                    colFormulas.put(colIdx, formula);
+                }
+                if (!blank(heading)) {
+                    colCustomHeadings.put(colIdx, heading);
+                }
+            }
+        }
+
+        org.w3c.dom.NodeList axes = grid.getElementsByTagName("GRIDAXIS");
+        for (int a = 0; a < axes.getLength(); a++) {
+            org.w3c.dom.Element axis = (org.w3c.dom.Element) axes.item(a);
+            String axisName = axis.getAttribute("AXISNAME");
+            boolean isRow = "Row".equalsIgnoreCase(axisName);
+            boolean isCol = "Column".equalsIgnoreCase(axisName);
+            if (!isRow && !isCol) {
+                continue;
+            }
+            List<String> dimNames = new ArrayList<>();
+            org.w3c.dom.NodeList layers = axis.getElementsByTagName("GRIDLAYER");
+            for (int l = 0; l < layers.getLength(); l++) {
+                String dn = ((org.w3c.dom.Element) layers.item(l)).getAttribute("DIMENSIONNAME");
+                if (!blank(dn)) {
+                    dimNames.add(dn);
+                }
+            }
+            Map<Integer, List<String>> axisSpecs = new TreeMap<>();
+            org.w3c.dom.NodeList segs = axis.getElementsByTagName("GRIDSEGMENT");
+            for (int s = 0; s < segs.getLength(); s++) {
+                org.w3c.dom.Element seg = (org.w3c.dom.Element) segs.item(s);
+                int idx = parseIntSafe(seg.getAttribute("INDEX"), s);
+                org.w3c.dom.NodeList segLayers = seg.getElementsByTagName("SEGMENTLAYER");
+                List<String> parts = new ArrayList<>();
+                for (int sl = 0; sl < segLayers.getLength(); sl++) {
+                    org.w3c.dom.Element segLayer = (org.w3c.dom.Element) segLayers.item(sl);
+                    int layerIdx = parseIntSafe(segLayer.getAttribute("LAYERINDEX"), sl);
+                    String dim = layerIdx >= 0 && layerIdx < dimNames.size() ? dimNames.get(layerIdx) : ("Layer" + layerIdx);
+                    List<String> exprs = allMetadataExpressions(segLayer);
+                    if (!exprs.isEmpty()) {
+                        parts.add(dim + "=" + String.join(", ", exprs));
+                    }
+                }
+                axisSpecs.put(idx, parts);
+            }
+            int maxIdx = isRow
+                    ? parseIntSafe(grid.getAttribute("ROW_COUNT"), axisSpecs.size())
+                    : parseIntSafe(grid.getAttribute("COLUMN_COUNT"), axisSpecs.size());
+            for (int idx : (isRow ? rowFormulas.keySet() : colFormulas.keySet())) {
+                if (idx + 1 > maxIdx) {
+                    maxIdx = idx + 1;
+                }
+            }
+            Map<String, String> axisMap = new LinkedHashMap<>();
+            for (int idx = 0; idx < maxIdx; idx++) {
+                List<String> parts = axisSpecs.getOrDefault(idx, Collections.emptyList());
+                String formula = isRow ? rowFormulas.get(idx) : colFormulas.get(idx);
+                String heading = isRow ? rowCustomHeadings.get(idx) : colCustomHeadings.get(idx);
+                StringBuilder summary = new StringBuilder();
+                if (!blank(heading)) {
+                    summary.append("\"").append(heading).append("\" ");
+                }
+                if (!blank(formula)) {
+                    summary.append("Formula(").append(formula).append(")");
+                }
+                if (!parts.isEmpty()) {
+                    if (summary.length() > 0) {
+                        summary.append(" | ");
+                    }
+                    summary.append(String.join("; ", parts));
+                }
+                if (summary.length() == 0) {
+                    summary.append("(blank/separator)");
+                }
+                String key = isRow ? ("Row " + (idx + 1)) : ("Col " + columnLabel(idx));
+                axisMap.put(key, summary.toString());
+            }
+            if (!axisMap.isEmpty()) {
+                sections.put(gridPrefix + (isRow ? "Rows" : "Columns"), axisMap);
+            }
+        }
+    }
+
+    private static String columnLabel(int index) {
+        StringBuilder sb = new StringBuilder();
+        int n = index;
+        while (n >= 0) {
+            sb.insert(0, (char) ('A' + (n % 26)));
+            n = (n / 26) - 1;
+        }
+        return sb.toString();
+    }
+
+    private static void putAttrIfNotEmpty(Map<String, String> target, String key, org.w3c.dom.Element el, String attr) {
+        String v = el.getAttribute(attr);
+        if (!blank(v)) {
+            target.put(key, v);
+        }
+    }
+
+    private static String firstMetadataExpression(org.w3c.dom.Element parent) {
+        List<String> all = allMetadataExpressions(parent);
+        return all.isEmpty() ? "" : String.join(", ", all);
+    }
+
+    private static List<String> allMetadataExpressions(org.w3c.dom.Element parent) {
+        List<String> out = new ArrayList<>();
+        org.w3c.dom.NodeList nl = parent.getElementsByTagName("METADATAEXPRESSION");
+        for (int i = 0; i < nl.getLength(); i++) {
+            String v = ((org.w3c.dom.Element) nl.item(i)).getAttribute("VALUE");
+            if (!blank(v)) {
+                out.add(v);
+            }
+        }
+        return out;
+    }
+
+    private static String extractCustomHeading(org.w3c.dom.Element cell) {
+        org.w3c.dom.NodeList nl = cell.getElementsByTagName("CUSTOMHEADING");
+        for (int i = 0; i < nl.getLength(); i++) {
+            String v = nl.item(i).getTextContent();
+            if (!blank(v)) {
+                return v.replaceAll("\\s+", " ").trim();
+            }
+        }
+        return "";
+    }
+
+    private static int parseIntSafe(String val, int fallback) {
+        if (blank(val)) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(val.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private Map<String, Object> viewFrObject(ReportDetail detail, String fmt, String povSlice,
+                                             String entity, String partner) {
+        String code = detail.code == null ? "" : detail.code;
+        Map<String, Map<String, String>> sections = parseSections(code);
+        boolean html = "HTML".equalsIgnoreCase(fmt) || "HFM".equalsIgnoreCase(fmt);
+        String rendered = renderFrSpecification(detail, sections, fmt, povSlice, entity, partner, html);
+
+        String safeName = detail.info.name.replaceAll("[^A-Za-z0-9._-]", "_");
+        String fileName = safeName + "_spec." + (html ? "html" : "txt");
+        Path dir = Paths.get(config.extractExportDir()).resolve("reports");
+        Path written = dir.resolve(fileName);
+        try {
+            Files.createDirectories(dir);
+            Files.write(written, rendered.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            throw new ApiException(500, "hfm_error", "Could not write rendered FR report view: " + e.getMessage());
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", detail.info.name);
+        out.put("reportType", detail.info.reportType);
+        out.put("folder", detail.info.folder);
+        out.put("format", fmt);
+        if (povSlice != null) {
+            out.put("povSlice", povSlice);
+        }
+        if (!blank(entity)) {
+            out.put("entity", entity.trim());
+        }
+        if (!blank(partner)) {
+            out.put("partner", partner.trim());
+        }
+        out.put("finished", true);
+        out.put("status", TaskProgress.Status.COMPLETED.name());
+        out.put("sections", sections);
+        Map<String, Object> fileInfo = describeFile(written, true);
+        out.put("file", fileInfo);
+        Object content = fileInfo.remove("_content");
+        if (content != null) {
+            out.put("content", content);
+        }
+        return out;
+    }
+
+    private static String renderFrSpecification(ReportDetail detail, Map<String, Map<String, String>> sections,
+                                                String fmt, String povSlice, String entity, String partner,
+                                                boolean html) {
+        String desc = detail.info.description != null && !detail.info.description.isEmpty()
+                ? detail.info.description
+                : detail.info.name;
+        StringBuilder sb = new StringBuilder();
+        if (html) {
+            sb.append("<html><head><meta charset=\"UTF-8\"/><title>")
+                    .append(escapeHtml(detail.info.name)).append("</title></head><body>\n");
+            sb.append("<h1>").append(escapeHtml(detail.info.name)).append(" - ")
+                    .append(escapeHtml(desc)).append("</h1>\n");
+            sb.append("<p><strong>Type:</strong> ").append(escapeHtml(detail.info.reportType))
+                    .append(" | <strong>Folder:</strong> ").append(escapeHtml(detail.info.folder));
+            if (!blank(povSlice)) {
+                sb.append(" | <strong>POV:</strong> ").append(escapeHtml(povSlice));
+            }
+            if (!blank(entity)) {
+                sb.append(" | <strong>Entity:</strong> ").append(escapeHtml(entity));
+            }
+            sb.append("</p>\n");
+            for (Map.Entry<String, Map<String, String>> sec : sections.entrySet()) {
+                sb.append("<h2>").append(escapeHtml(sec.getKey())).append("</h2>\n");
+                sb.append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\"><thead><tr><th>Item</th><th>Definition</th></tr></thead><tbody>\n");
+                for (Map.Entry<String, String> kv : sec.getValue().entrySet()) {
+                    sb.append("<tr><td>").append(escapeHtml(kv.getKey())).append("</td><td>")
+                            .append(escapeHtml(kv.getValue())).append("</td></tr>\n");
+                }
+                sb.append("</tbody></table>\n");
+            }
+            sb.append("</body></html>\n");
+        } else {
+            sb.append("Report: ").append(detail.info.name).append(" - ").append(desc).append("\n");
+            sb.append("Type: ").append(detail.info.reportType).append(" | Folder: ").append(detail.info.folder)
+                    .append(" | Format: ").append(fmt).append("\n");
+            if (!blank(povSlice)) {
+                sb.append("POV: ").append(povSlice).append("\n");
+            }
+            for (Map.Entry<String, Map<String, String>> sec : sections.entrySet()) {
+                sb.append("\n[").append(sec.getKey()).append("]\n");
+                for (Map.Entry<String, String> kv : sec.getValue().entrySet()) {
+                    sb.append(kv.getKey()).append("=").append(kv.getValue()).append("\n");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String escapeHtml(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
+    }
+
     /** Updates or adds section key=value pairs in {@code code} while preserving existing formatting and order. */
     static String applySections(String code, Map<String, Map<String, String>> updates) {
+        if (isXmlReportCode(code)) {
+            return applyFrXmlSections(code, updates);
+        }
         Map<String, Map<String, String>> remaining = new LinkedHashMap<>();
         for (Map.Entry<String, Map<String, String>> e : updates.entrySet()) {
             if (e.getValue() != null && !e.getValue().isEmpty()) {
@@ -687,6 +1158,106 @@ public final class ReportService {
                     field + " must be one of " + String.join(", ", new java.util.TreeSet<>(allowed)));
         }
         return u;
+    }
+
+    private static String applyFrXmlSections(String xml, Map<String, Map<String, String>> updates) {
+        if (updates == null || updates.isEmpty()) {
+            return xml;
+        }
+        String result = xml;
+        Map<String, String> general = findSectionIgnoreCase(updates, "General");
+        if (general != null) {
+            String desc = general.get("ReportDescription");
+            if (desc == null) {
+                desc = general.get("REPORT_DESCRIPTION");
+            }
+            if (desc != null) {
+                result = result.replaceFirst("(REPORT_DESCRIPTION=\")([^\"]*)(\")",
+                        "$1" + java.util.regex.Matcher.quoteReplacement(escapeHtml(desc)) + "$3");
+            }
+        }
+        Map<String, String> pov = findSectionIgnoreCase(updates, "PointOfView");
+        if (pov == null) {
+            pov = findSectionIgnoreCase(updates, "POV");
+        }
+        if (pov != null) {
+            for (Map.Entry<String, String> e : pov.entrySet()) {
+                if (blank(e.getKey()) || e.getValue() == null) {
+                    continue;
+                }
+                String dimQ = java.util.regex.Pattern.quote(e.getKey().trim());
+                String pattern = "(<DIMENSION[^>]*\\bNAME=\"" + dimQ + "\"[^>]*>\\s*<METADATAEXPRESSION[^>]*\\bVALUE=\")([^\"]*)(\")";
+                result = result.replaceAll(pattern,
+                        "$1" + java.util.regex.Matcher.quoteReplacement(escapeHtml(e.getValue().trim())) + "$3");
+            }
+        }
+        return result;
+    }
+
+    private static String[] splitFolderAndName(String folder, String rawName) {
+        if (rawName != null && (rawName.contains("/") || rawName.contains("\\"))) {
+            String norm = rawName.replace('\\', '/');
+            while (norm.startsWith("/")) {
+                norm = norm.substring(1);
+            }
+            while (norm.endsWith("/")) {
+                norm = norm.substring(0, norm.length() - 1);
+            }
+            int lastSlash = norm.lastIndexOf('/');
+            if (lastSlash > 0 && lastSlash < norm.length() - 1) {
+                String pathPart = norm.substring(0, lastSlash);
+                String namePart = norm.substring(lastSlash + 1);
+                String effectiveFolder = (!blank(folder) && !"Root".equalsIgnoreCase(normalizeFolder(folder)))
+                        ? folder
+                        : pathPart;
+                return new String[] {effectiveFolder, namePart};
+            }
+        }
+        return new String[] {folder, rawName};
+    }
+
+    private static String defaultFileTypeFor(String reportType) {
+        if (reportType == null) {
+            return "RPTDEF";
+        }
+        switch (reportType.toUpperCase(Locale.ROOT)) {
+            case "FR_REPORT":
+                return "DES";
+            case "FR_BOOK":
+                return "KBK";
+            case "FR_SNAPSHOT_BOOK":
+                return "KBT";
+            case "FR_SNAPSHOT_REPORT":
+                return "RPT";
+            case "FR_BATCH":
+                return "BCH";
+            case "FR_GRID":
+                return "ROG";
+            case "FR_ROW_COLUMN":
+                return "ROS";
+            case "FR_TEXT":
+                return "ROT";
+            case "FOLDER":
+                return "FOLDER";
+            default:
+                return "RPTDEF";
+        }
+    }
+
+    private static String defaultEncodingFor(String reportType) {
+        if (reportType == null) {
+            return "UTF-8";
+        }
+        switch (reportType.toUpperCase(Locale.ROOT)) {
+            case "FR_REPORT":
+            case "FR_SNAPSHOT_REPORT":
+            case "FR_GRID":
+            case "FR_ROW_COLUMN":
+            case "FR_TEXT":
+                return "ZIP:UTF-8";
+            default:
+                return "UTF-8";
+        }
     }
 
     private static String normalizeFolder(String folder) {

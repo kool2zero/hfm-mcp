@@ -332,6 +332,7 @@ function Wait-DaemonHealthy([string]$url, [int]$seconds = 90) {
     $isDesktop = $PSVersionTable.PSVersion.Major -lt 6
     if ($isDesktop) {
         # Only for this local health check of our own self-signed certificate.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $previous = [Net.ServicePointManager]::ServerCertificateValidationCallback
         [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
     }

@@ -38,9 +38,9 @@ runtimes. Keeping HFM in a small JDK 8 daemon keeps it on a supported runtime.
 | `hfm_validate_pov` | Check every member of an HFM POV string (`;` lists, `{Parent.[List]}`, `Parent.Child`), with reasons and "did you mean" suggestions. |
 | `hfm_list_journals` | Journals of a Scenario / Year / Period / Value, filtered by status, type, label, group or entity; counts per status. |
 | `hfm_get_journal` | One journal with its line items (side, amount, entity, account, ICP, customs) and debit / credit totals. |
-| `hfm_list_reports` | Report documents in HFM Document Manager (Journal, Intercompany, IC Matching, Data Explorer, Hyperion), filtered by type, folder or name/description. |
-| `hfm_get_report` | A report's document metadata, parsed `[Section]` settings, and full report definition code / script. |
-| `hfm_view_report` | Execute / render a report (`SystemReportsHelper`) with optional POV, entity/partner and format (`HTML`, `HFM`, `PDF`, `RTF`, `XLS`, `XLSX`) overrides, returning the rendered output and exported file path. |
+| `hfm_list_reports` | Financial Reporting (`FR_REPORT`, `FR_BOOK`, `FR_BATCH`, …) and HFM Document Manager (`JOURNAL`, `INTERCOMPANY`, `IC_MATCH_BY_ACCOUNT`, …) reports and books across all folders, filtered by type, folder or name/description. |
+| `hfm_get_report` | A report's or book's metadata, parsed `sections` (including FR grid rows, columns, formulas, POV, header text, or book chapters and member selections), and full report definition code / XML. |
+| `hfm_view_report` | Execute / render an HFM report (`SystemReportsHelper`) or render a Financial Reporting specification view with optional POV, entity/partner and format (`HTML`, `HFM`, `PDF`, `RTF`, `XLS`, `XLSX`) overrides, returning the rendered output and exported file path. |
 
 With actions enabled (see below), more:
 

@@ -642,6 +642,85 @@ class ApiServerTest {
         assertTrue(log.contains("REPORT_SAVE") && log.contains("MonthlyJournals") && log.contains("BudgetJournals"), log);
     }
 
+    @Test
+    void financialReportingBooksAndReportsInSubfoldersAreParsedViewedAndUpdated() throws IOException {
+        props.setProperty("actions.allowed", "REPORT_SAVE");
+        String sid = login("jdoe", "password");
+
+        String designXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<DESIGN DESIGNNAME=\"RFJUN_DC\" REPORT_DESCRIPTION=\"RF JUN ToGo Distrib Schedule\" VERSION=\"2.0\">\n"
+                + "  <LAYOUT NAME=\"Header\"><TEXTOBJECT NAME=\"Text1\"><TEXTVIEW DESIGN_NON_RTF_TEXT=\"DISTRIBUTION SCHEDULE\"/></TEXTOBJECT></LAYOUT>\n"
+                + "  <GRIDOBJECT ALIASTABLE=\"Default\" COLUMN_COUNT=\"2\" DATASOURCE_DETAILS=\"3:HFM:BICFM: BICFM\" ROW_COUNT=\"2\">\n"
+                + "    <POV><DIMENSION NAME=\"Scenario\"><METADATAEXPRESSION VALUE=\"Actual\"/></DIMENSION>"
+                + "<DIMENSION NAME=\"Entity\"><METADATAEXPRESSION VALUE=\"$Prompt for Entity$\"/></DIMENSION></POV>\n"
+                + "    <GRIDAXIS AXISNAME=\"Row\"><GRIDLAYER DIMENSIONNAME=\"Account\" INDEX=\"0\"/>"
+                + "<GRIDSEGMENT INDEX=\"0\"><SEGMENTLAYER LAYERINDEX=\"0\"><METADATAEXPRESSION VALUE=\"Sales\"/></SEGMENTLAYER></GRIDSEGMENT>"
+                + "<GRIDSEGMENT INDEX=\"1\"><SEGMENTLAYER LAYERINDEX=\"0\"><METADATAEXPRESSION VALUE=\"COGS\"/></SEGMENTLAYER></GRIDSEGMENT></GRIDAXIS>\n"
+                + "    <GRIDAXIS AXISNAME=\"Column\"><GRIDLAYER DIMENSIONNAME=\"Year\" INDEX=\"0\"/>"
+                + "<GRIDSEGMENT INDEX=\"0\"><SEGMENTLAYER LAYERINDEX=\"0\"><METADATAEXPRESSION VALUE=\"2025\"/></SEGMENTLAYER></GRIDSEGMENT>"
+                + "<GRIDSEGMENT INDEX=\"1\"><SEGMENTLAYER LAYERINDEX=\"0\"/></GRIDSEGMENT></GRIDAXIS>\n"
+                + "    <GRIDMATRIX><GRIDCELL COLUMN=\"1\" ROW=\"-1\" TYPE=\"column\"><GRIDSEGMENT INDEX=\"0\">"
+                + "<DERIVEDEXPRESSION VALUE=\"[A]\"/></GRIDSEGMENT></GRIDCELL></GRIDMATRIX>\n"
+                + "  </GRIDOBJECT>\n"
+                + "</DESIGN>";
+
+        String bookXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<BOOK NAME=\"RFJUN_Continent\" REPORT_DESCRIPTION=\"RF JUN Continent Book\" VERSION=\"2.0\">\n"
+                + "  <BOOK_POV><DATASOURCE DATASOURCE_NAME=\"BICFM\" DATASOURCE_TYPE=\"3\">"
+                + "<POV><DIMENSION NAME=\"Year\"><METADATAEXPRESSION VALUE=\"2025\"/></DIMENSION></POV></DATASOURCE></BOOK_POV>\n"
+                + "  <CHAPTER NAME=\"RFJUN_DC\" REPORTNAME=\"/RF JUN Reports/RFJUN_DC\" TYPE=\"2\">"
+                + "<CHAPTER_MEMSELS><DIMENSION NAME=\"Entity\"><METADATAEXPRESSION VALUE=\"Group\"/></DIMENSION></CHAPTER_MEMSELS></CHAPTER>\n"
+                + "</BOOK>";
+
+        JsonNode p1 = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"RFJUN_DC\",\"reportType\":\"FR_REPORT\",\"folder\":\"/RF JUN Reports\","
+                        + "\"description\":\"RF JUN ToGo Distrib Schedule\",\"code\":"
+                        + Json.MAPPER.writeValueAsString(designXml) + "}", KEY, sid));
+        ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + p1.get("planId").asText() + "\"}", KEY, sid));
+
+        JsonNode p2 = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"/RF JUN BOOKS/RFJUN_Continent\",\"reportType\":\"FR_BOOK\","
+                        + "\"description\":\"RF JUN Continent Book\",\"code\":"
+                        + Json.MAPPER.writeValueAsString(bookXml) + "}", KEY, sid));
+        ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + p2.get("planId").asText() + "\"}", KEY, sid));
+
+        // Search across all folders from Root using query="RF" and query="Distribution" (matches "Distrib")
+        JsonNode rfList = ok(call("POST", "/api/v1/reports/list", "{\"query\":\"RF\"}", KEY, sid));
+        assertEquals(2, rfList.get("count").asInt());
+        assertTrue(rfList.get("folders").toString().contains("RF JUN Reports"));
+
+        JsonNode distList = ok(call("POST", "/api/v1/reports/list", "{\"query\":\"Distribution\"}", KEY, sid));
+        assertEquals(1, distList.get("count").asInt());
+        assertEquals("RFJUN_DC", distList.at("/reports/0/name").asText());
+
+        // Get FR_REPORT by bare name from Root (searches subfolders automatically)
+        JsonNode gotReport = ok(call("POST", "/api/v1/reports/get", "{\"name\":\"RFJUN_DC\"}", KEY, sid));
+        assertEquals("FR_REPORT", gotReport.get("reportType").asText());
+        assertEquals("DES", gotReport.get("fileType").asText());
+        assertEquals("RF JUN Reports", gotReport.get("folder").asText());
+        assertEquals("Actual", gotReport.at("/sections/PointOfView/Scenario").asText());
+        assertEquals("Account=Sales", gotReport.at("/sections/Rows/Row 1").asText());
+        assertTrue(gotReport.at("/sections/Columns/Col B").asText().contains("Formula([A])"));
+
+        // Get FR_BOOK by full path in name
+        JsonNode gotBook = ok(call("POST", "/api/v1/reports/get",
+                "{\"name\":\"/RF JUN BOOKS/RFJUN_Continent\"}", KEY, sid));
+        assertEquals("FR_BOOK", gotBook.get("reportType").asText());
+        assertEquals("1", gotBook.at("/sections/General/ChapterCount").asText());
+        assertTrue(gotBook.at("/sections/Chapters/Chapter 1").asText().contains("/RF JUN Reports/RFJUN_DC"));
+
+        // View FR_REPORT renders HTML specification table
+        JsonNode viewed = ok(call("POST", "/api/v1/reports/view", "{\"name\":\"RFJUN_DC\"}", KEY, sid));
+        assertTrue(viewed.get("finished").asBoolean());
+        assertTrue(viewed.get("content").asText().contains("DISTRIBUTION SCHEDULE"));
+        assertTrue(viewed.get("content").asText().contains("Account=Sales"));
+
+        // Update FR_REPORT POV via sections
+        JsonNode updPlan = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"RFJUN_DC\",\"sections\":{\"PointOfView\":{\"Scenario\":\"Budget\"}}}", KEY, sid));
+        assertEquals("Budget", updPlan.at("/sections/PointOfView/Scenario").asText());
+    }
+
     // ---------------------------------------------------------------- extract and copy
 
     @Test

@@ -1064,31 +1064,135 @@ public final class OracleHfmBackend implements HfmBackend {
         REPORT_DOC_TYPES.put("HYP", DOCUMENTTYPES.WEBOM_DOCTYPE_RPTHYP);
     }
 
+    /** Financial Reporting (EPM Workspace repository, TENANT_ID='fr') type -> MCP reportType. */
+    private static final Map<String, String> FR_REPO_TO_REPORT_TYPE = new LinkedHashMap<>();
+    private static final Map<String, String> REPORT_TYPE_TO_FR_REPO = new LinkedHashMap<>();
+    private static final Map<String, String> FR_REPORT_FILE_TYPES = new LinkedHashMap<>();
+    private static final Set<String> FR_INTERNAL_TOP_FOLDERS = new HashSet<>(Arrays.asList(
+            "HRINTERNALFOLDER", "IRBIVINTERNALFOLDER", "ANNOTATIONSINTERNALFOLDER",
+            "BROADCAST MESSAGES", "SHARED WORKSPACE PAGES", "SYSTEM", "ADMINISTRATION", "SSR TEMPLATE"));
+
+    static {
+        registerFrType("FR_REPORT", "des", "DES");
+        registerFrType("FR_BOOK", "kbk", "KBK");
+        registerFrType("FR_SNAPSHOT_BOOK", "kbt", "KBT");
+        registerFrType("FR_SNAPSHOT_REPORT", "rpt", "RPT");
+        registerFrType("FR_BATCH", "bch", "BCH");
+        registerFrType("FR_GRID", "rog", "ROG");
+        registerFrType("FR_ROW_COLUMN", "ros", "ROS");
+        registerFrType("FR_TEXT", "rot", "ROT");
+        registerFrType("FOLDER", "FOLDER", "FOLDER");
+        FR_REPO_TO_REPORT_TYPE.put("bjo", "FR_BATCH");
+    }
+
+    private static void registerFrType(String reportType, String repoType, String fileType) {
+        FR_REPO_TO_REPORT_TYPE.put(repoType.toLowerCase(Locale.ROOT), reportType);
+        REPORT_TYPE_TO_FR_REPO.put(reportType, repoType);
+        FR_REPORT_FILE_TYPES.put(reportType, fileType);
+    }
+
+    private static final class FrRepoNode {
+        final String uuid;
+        final String repoType;
+        final String reportType;
+        final String fileType;
+        final String parentUuid;
+        final String author;
+        final long creationTime;
+        final boolean internal;
+        final boolean hidden;
+        String name;
+        String description = "";
+        String lastModifiedBy = "";
+        long lastModified;
+        String folderPath = "Root";
+        boolean isPrivate;
+
+        FrRepoNode(String uuid, String repoType, String reportType, String fileType, String parentUuid,
+                   String author, long creationTime, boolean internal, boolean hidden) {
+            this.uuid = uuid;
+            this.repoType = repoType;
+            this.reportType = reportType;
+            this.fileType = fileType;
+            this.parentUuid = parentUuid;
+            this.author = author == null ? "" : author;
+            this.creationTime = creationTime;
+            this.internal = internal;
+            this.hidden = hidden;
+            this.lastModified = creationTime;
+        }
+
+        ReportInfo toReportInfo() {
+            String owner = notBlank(lastModifiedBy) ? lastModifiedBy : author;
+            return new ReportInfo(
+                    name == null ? uuid : name,
+                    reportType,
+                    fileType,
+                    folderPath,
+                    description == null ? "" : description,
+                    "[Default]",
+                    isPrivate,
+                    owner == null ? "" : owner,
+                    lastModified);
+        }
+    }
+
+    private final Object frCacheLock = new Object();
+    private java.sql.Connection frJdbcConnection;
+    private List<FrRepoNode> frCachedNodes;
+    private long frCacheTimestampMs;
+    private static final long FR_CACHE_TTL_MS = 15_000L;
+
     @Override
     public List<ReportInfo> listReports(BackendSession session, ReportQuery q) throws BackendException {
         SessionInfo info = info(session);
         ENUMSHOWPRIVATEDOCS priv = q.includePrivate
                 ? ENUMSHOWPRIVATEDOCS.ENUMSHOWPRIVATEDOCS_SHOW
                 : ENUMSHOWPRIVATEDOCS.ENUMSHOWPRIVATEDOCS_DONTSHOW;
-        List<DOCUMENTTYPES> wantedTypes = new ArrayList<>();
+        List<DOCUMENTTYPES> wantedHfmTypes = new ArrayList<>();
+        Set<String> wantedFrTypes = new HashSet<>();
         if (q.reportTypes != null && !q.reportTypes.isEmpty()) {
             for (String rt : q.reportTypes) {
-                wantedTypes.add(toDocType(rt));
+                if (!notBlank(rt)) {
+                    continue;
+                }
+                String upper = rt.trim().toUpperCase(Locale.ROOT);
+                if (REPORT_TYPE_TO_FR_REPO.containsKey(upper)) {
+                    wantedFrTypes.add(upper);
+                } else {
+                    wantedHfmTypes.add(toDocType(upper));
+                }
             }
         } else {
-            wantedTypes.addAll(REPORT_DOC_TYPES.values());
+            wantedHfmTypes.addAll(REPORT_DOC_TYPES.values());
+            wantedFrTypes.addAll(REPORT_TYPE_TO_FR_REPO.keySet());
+            wantedFrTypes.remove("FOLDER");
         }
         String folder = normalizeDocPath(q.folder);
-        try {
-            DocumentOM om = new DocumentOM(info);
-            List<FMDocument> docs = new ArrayList<>();
-            if (q.reportTypes == null || q.reportTypes.isEmpty()) {
-                List<FMDocument> all = enumDocsAtPath(om, folder, DOCUMENTTYPES.WEBOM_DOCTYPE_ALL,
-                        DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
-                if (all != null && !all.isEmpty()) {
-                    docs.addAll(all);
+        Set<String> seen = new HashSet<>();
+        List<ReportInfo> out = new ArrayList<>();
+
+        // 1. Query HFM Document Manager (DocumentOM) if any HFM report types are requested
+        if (!wantedHfmTypes.isEmpty()) {
+            try {
+                DocumentOM om = new DocumentOM(info);
+                List<FMDocument> docs = new ArrayList<>();
+                if (q.reportTypes == null || q.reportTypes.isEmpty()) {
+                    List<FMDocument> all = enumDocsAtPath(om, folder, DOCUMENTTYPES.WEBOM_DOCTYPE_ALL,
+                            DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
+                    if (all != null && !all.isEmpty()) {
+                        docs.addAll(all);
+                    } else {
+                        for (DOCUMENTTYPES dt : wantedHfmTypes) {
+                            List<FMDocument> found = enumDocsAtPath(om, folder, dt,
+                                    DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
+                            if (found != null) {
+                                docs.addAll(found);
+                            }
+                        }
+                    }
                 } else {
-                    for (DOCUMENTTYPES dt : wantedTypes) {
+                    for (DOCUMENTTYPES dt : wantedHfmTypes) {
                         List<FMDocument> found = enumDocsAtPath(om, folder, dt,
                                 DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
                         if (found != null) {
@@ -1096,30 +1200,52 @@ public final class OracleHfmBackend implements HfmBackend {
                         }
                     }
                 }
-            } else {
-                for (DOCUMENTTYPES dt : wantedTypes) {
-                    List<FMDocument> found = enumDocsAtPath(om, folder, dt,
-                            DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_ALL, priv);
-                    if (found != null) {
-                        docs.addAll(found);
-                    }
-                }
-            }
-            Set<DOCUMENTTYPES> allowedSet = new HashSet<>(wantedTypes);
-            Set<String> seen = new HashSet<>();
-            List<ReportInfo> out = new ArrayList<>();
-            for (FMDocument d : docs) {
-                if (d == null || d.getDocType() == null || !allowedSet.contains(d.getDocType())) {
-                    continue;
-                }
-                ReportInfo ri = toReportInfo(d, folder);
-                if (notBlank(q.query)) {
-                    String needle = q.query.trim().toLowerCase(Locale.ROOT);
-                    boolean nameMatch = ri.name != null && ri.name.toLowerCase(Locale.ROOT).contains(needle);
-                    boolean descMatch = ri.description != null && ri.description.toLowerCase(Locale.ROOT).contains(needle);
-                    if (!nameMatch && !descMatch) {
+                Set<DOCUMENTTYPES> allowedSet = new HashSet<>(wantedHfmTypes);
+                for (FMDocument d : docs) {
+                    if (d == null || d.getDocType() == null || !allowedSet.contains(d.getDocType())) {
                         continue;
                     }
+                    ReportInfo ri = toReportInfo(d, folder);
+                    if (!matchesReportQuery(ri, q.query)) {
+                        continue;
+                    }
+                    String key = ri.folder.toUpperCase(Locale.ROOT) + "|" + ri.reportType + "|"
+                            + ri.name.toUpperCase(Locale.ROOT);
+                    if (seen.add(key)) {
+                        out.add(ri);
+                    }
+                }
+            } catch (HFMException e) {
+                if (wantedFrTypes.isEmpty()) {
+                    throw classify(e, "list reports");
+                }
+                LOG.log(Level.FINE, "DocumentOM.enumDocuments returned error while listing reports", e);
+            }
+        }
+
+        // 2. Query Financial Reporting Repository (TENANT_ID = 'fr')
+        if (!wantedFrTypes.isEmpty()) {
+            List<FrRepoNode> frNodes = loadFrRepositoryNodes(false);
+            boolean explicitInternalFolder = isInternalFrFolder(folder);
+            for (FrRepoNode node : frNodes) {
+                if (!wantedFrTypes.contains(node.reportType)) {
+                    continue;
+                }
+                if ((node.internal || node.hidden) && !explicitInternalFolder) {
+                    continue;
+                }
+                if (!explicitInternalFolder && isInternalFrFolder(node.folderPath)) {
+                    continue;
+                }
+                if (node.isPrivate && !q.includePrivate && !explicitInternalFolder) {
+                    continue;
+                }
+                if (!matchesFolderFilter(node.folderPath, folder)) {
+                    continue;
+                }
+                ReportInfo ri = node.toReportInfo();
+                if (!matchesReportQuery(ri, q.query)) {
+                    continue;
                 }
                 String key = ri.folder.toUpperCase(Locale.ROOT) + "|" + ri.reportType + "|"
                         + ri.name.toUpperCase(Locale.ROOT);
@@ -1127,28 +1253,67 @@ public final class OracleHfmBackend implements HfmBackend {
                     out.add(ri);
                 }
             }
-            out.sort((a, b) -> {
-                int c = a.name.compareToIgnoreCase(b.name);
-                return c != 0 ? c : a.reportType.compareToIgnoreCase(b.reportType);
-            });
-            return out;
-        } catch (HFMException e) {
-            throw classify(e, "list reports");
         }
+
+        out.sort((a, b) -> {
+            int p = Integer.compare(reportTypePriority(a.reportType), reportTypePriority(b.reportType));
+            if (p != 0) {
+                return p;
+            }
+            int f = a.folder.compareToIgnoreCase(b.folder);
+            if (f != 0) {
+                return f;
+            }
+            int c = a.name.compareToIgnoreCase(b.name);
+            return c != 0 ? c : a.reportType.compareToIgnoreCase(b.reportType);
+        });
+        return out;
     }
 
     @Override
     public ReportDetail getReport(BackendSession session, String folder, String name, String reportType)
             throws BackendException {
         SessionInfo info = info(session);
-        String normFolder = normalizeDocPath(folder);
+        String effectiveFolder = folder;
+        String effectiveName = name == null ? "" : name.trim();
+        if (effectiveName.contains("/") || effectiveName.contains("\\")) {
+            String norm = effectiveName.replace('\\', '/');
+            while (norm.startsWith("/")) {
+                norm = norm.substring(1);
+            }
+            int lastSlash = norm.lastIndexOf('/');
+            if (lastSlash > 0 && lastSlash < norm.length() - 1) {
+                if (!notBlank(effectiveFolder) || "Root".equalsIgnoreCase(normalizeDocPath(effectiveFolder))) {
+                    effectiveFolder = norm.substring(0, lastSlash);
+                }
+                effectiveName = norm.substring(lastSlash + 1);
+            }
+        }
+        String normFolder = normalizeDocPath(effectiveFolder);
+        String upperType = notBlank(reportType) ? reportType.trim().toUpperCase(Locale.ROOT) : null;
+        boolean isFrOnly = upperType != null && REPORT_TYPE_TO_FR_REPO.containsKey(upperType);
+        boolean isHfmOnly = upperType != null && !isFrOnly;
+
+        // 1. Check Financial Reporting repository first unless an HFM-specific reportType was requested
+        if (!isHfmOnly) {
+            FrRepoNode frMatch = findFrReportNode(normFolder, effectiveName, upperType);
+            if (frMatch != null) {
+                return readFrReportDetail(frMatch);
+            }
+            if (isFrOnly) {
+                throw new BackendException(Kind.BAD_REQUEST,
+                        "No report '" + effectiveName + "' (" + upperType + ") in " + displayFolder(normFolder));
+            }
+        }
+
+        // 2. Check HFM Document Manager (DocumentOM)
         try {
             DocumentOM om = new DocumentOM(info);
             ReportInfo meta = null;
-            DOCUMENTTYPES dt = notBlank(reportType) ? toDocType(reportType) : null;
+            DOCUMENTTYPES dt = upperType != null ? toDocType(upperType) : null;
             DOCUMENTFILETYPES ft = DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_RPTDEF;
             if (dt != null) {
-                FMDocument doc = getDocInfoAtPath(om, normFolder, name, dt, ft);
+                FMDocument doc = getDocInfoAtPath(om, normFolder, effectiveName, dt, ft);
                 if (doc != null) {
                     meta = toReportInfo(doc, normFolder);
                     ft = doc.getFileType() != null ? doc.getFileType() : ft;
@@ -1161,21 +1326,31 @@ public final class OracleHfmBackend implements HfmBackend {
                 List<ReportInfo> candidates = listReports(session, new ReportQuery(filterTypes, normFolder, null, true));
                 List<ReportInfo> matches = new ArrayList<>();
                 for (ReportInfo c : candidates) {
-                    if (c.name != null && c.name.equalsIgnoreCase(name)) {
+                    if (c.name != null && c.name.equalsIgnoreCase(effectiveName)) {
                         matches.add(c);
                     }
                 }
                 if (matches.isEmpty()) {
                     throw new BackendException(Kind.BAD_REQUEST,
-                            "No report '" + name + "'" + (notBlank(reportType) ? " (" + reportType + ")" : "")
+                            "No report '" + effectiveName + "'" + (notBlank(reportType) ? " (" + reportType + ")" : "")
                                     + " in " + displayFolder(normFolder));
                 }
                 if (matches.size() > 1) {
+                    List<String> locations = new ArrayList<>();
+                    for (ReportInfo m : matches) {
+                        locations.add(m.folder + "/" + m.name + " (" + m.reportType + ")");
+                    }
                     throw new BackendException(Kind.BAD_REQUEST,
-                            "Multiple reports named '" + name + "' in " + displayFolder(normFolder)
-                                    + "; specify reportType");
+                            "Multiple reports named '" + effectiveName + "' found: "
+                                    + String.join(", ", locations) + "; specify folder and/or reportType");
                 }
                 meta = matches.get(0);
+                if (REPORT_TYPE_TO_FR_REPO.containsKey(meta.reportType)) {
+                    FrRepoNode frNode = findFrReportNode(meta.folder, meta.name, meta.reportType);
+                    if (frNode != null) {
+                        return readFrReportDetail(frNode);
+                    }
+                }
                 dt = toDocType(meta.reportType);
                 ft = toFileType(meta.fileType);
             }
@@ -1189,7 +1364,7 @@ public final class OracleHfmBackend implements HfmBackend {
             DecodedText decoded = decodeBytes(raw);
             return new ReportDetail(meta, decoded.text, decoded.encoding);
         } catch (HFMException e) {
-            BackendException be = classify(e, "read report " + name);
+            BackendException be = classify(e, "read report " + effectiveName);
             throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
         }
     }
@@ -1285,6 +1460,11 @@ public final class OracleHfmBackend implements HfmBackend {
     public void saveReport(BackendSession session, ReportDetail report, boolean overwrite) throws BackendException {
         SessionInfo info = info(session);
         ReportInfo ri = report.info;
+        String upperType = ri.reportType == null ? "" : ri.reportType.trim().toUpperCase(Locale.ROOT);
+        if (REPORT_TYPE_TO_FR_REPO.containsKey(upperType)) {
+            saveFrReport(ri, report.code == null ? "" : report.code, report.encoding, overwrite);
+            return;
+        }
         DOCUMENTTYPES dt = toDocType(ri.reportType);
         DOCUMENTFILETYPES ft = notBlank(ri.fileType) ? toFileType(ri.fileType) : DOCUMENTFILETYPES.WEBOM_DOCFILETYPE_RPTDEF;
         FMDocument doc = new FMDocument()
@@ -1309,6 +1489,481 @@ public final class OracleHfmBackend implements HfmBackend {
         } catch (HFMException e) {
             BackendException be = classify(e, "save report " + ri.name);
             throw be.kind() == Kind.HFM_ERROR ? new BackendException(Kind.BAD_REQUEST, e.getMessage(), e) : be;
+        }
+    }
+
+    // ---------------------------------------------------------------- Financial Reporting Repository (TENANT_ID = 'fr')
+
+    private java.sql.Connection getFrConnection() throws java.sql.SQLException {
+        synchronized (frCacheLock) {
+            try {
+                if (frJdbcConnection != null && !frJdbcConnection.isClosed()) {
+                    return frJdbcConnection;
+                }
+            } catch (java.sql.SQLException ignored) {
+                frJdbcConnection = null;
+            }
+            try {
+                Class<?> regUtils = Class.forName("com.hyperion.hit.registry.RegistryUtils");
+                frJdbcConnection = (java.sql.Connection) regUtils.getMethod("createNewConnection").invoke(null);
+                return frJdbcConnection;
+            } catch (Exception e) {
+                Throwable cause = e.getCause() != null ? e.getCause() : e;
+                if (cause instanceof java.sql.SQLException) {
+                    throw (java.sql.SQLException) cause;
+                }
+                throw new java.sql.SQLException("Cannot open EPM repository connection: " + cause.getMessage(), cause);
+            }
+        }
+    }
+
+    private void resetFrConnection() {
+        synchronized (frCacheLock) {
+            if (frJdbcConnection != null) {
+                try {
+                    frJdbcConnection.close();
+                } catch (Exception ignored) {
+                }
+                frJdbcConnection = null;
+            }
+        }
+    }
+
+    private List<FrRepoNode> loadFrRepositoryNodes(boolean forceRefresh) {
+        synchronized (frCacheLock) {
+            long now = System.currentTimeMillis();
+            if (!forceRefresh && frCachedNodes != null && (now - frCacheTimestampMs) < FR_CACHE_TTL_MS) {
+                return frCachedNodes;
+            }
+        }
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                java.sql.Connection conn = getFrConnection();
+                Map<String, FrRepoNode> byUuid = new LinkedHashMap<>();
+                String objSql = "SELECT OBJECT_UUID, TYPE, PARENT_FOLDER_UUID, AUTHOR, CREATION_DATE, INTERNAL, HIDDEN "
+                        + "FROM REPOSITORY_OBJECTS WHERE TENANT_ID = 'fr'";
+                try (java.sql.PreparedStatement ps = conn.prepareStatement(objSql);
+                     java.sql.ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String uuid = rs.getString(1);
+                        String rawType = rs.getString(2);
+                        String parent = rs.getString(3);
+                        String author = rs.getString(4);
+                        java.sql.Timestamp created = rs.getTimestamp(5);
+                        String internalStr = rs.getString(6);
+                        String hiddenStr = rs.getString(7);
+                        if (uuid == null || rawType == null || "ROOTfr".equals(uuid)) {
+                            continue;
+                        }
+                        String typeKey = rawType.trim().toLowerCase(Locale.ROOT);
+                        String reportType = FR_REPO_TO_REPORT_TYPE.get(typeKey);
+                        if (reportType == null) {
+                            continue;
+                        }
+                        String fileType = FR_REPORT_FILE_TYPES.getOrDefault(reportType, rawType.trim().toUpperCase(Locale.ROOT));
+                        long creationTime = created != null ? created.getTime() : 0L;
+                        boolean internal = "Y".equalsIgnoreCase(internalStr) || "TRUE".equalsIgnoreCase(internalStr) || "1".equals(internalStr);
+                        boolean hidden = "Y".equalsIgnoreCase(hiddenStr) || "TRUE".equalsIgnoreCase(hiddenStr) || "1".equals(hiddenStr);
+                        byUuid.put(uuid, new FrRepoNode(uuid, rawType.trim(), reportType, fileType, parent,
+                                author, creationTime, internal, hidden));
+                    }
+                }
+
+                String propSql = "SELECT p.OBJECT_UUID, p.PROPERTY_NAME, p.PROPERTY_VALUE "
+                        + "FROM REPOSITORY_OBJECT_PROPERTIES p "
+                        + "JOIN REPOSITORY_OBJECTS o ON p.OBJECT_UUID = o.OBJECT_UUID AND o.TENANT_ID = 'fr' "
+                        + "WHERE p.PROPERTY_NAME IN ('NAME', 'DESCRIPTION', 'lastModifiedBy', "
+                        + "'{http://www.jcp.org/jcr/1.0}lastModifiedBy', 'jcr:lastModified') "
+                        + "AND p.VERSION_NUMBER = (SELECT MAX(p2.VERSION_NUMBER) "
+                        + "FROM REPOSITORY_OBJECT_PROPERTIES p2 WHERE p2.OBJECT_UUID = p.OBJECT_UUID)";
+                try (java.sql.PreparedStatement ps = conn.prepareStatement(propSql);
+                     java.sql.ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        FrRepoNode node = byUuid.get(rs.getString(1));
+                        if (node == null) {
+                            continue;
+                        }
+                        String pName = rs.getString(2);
+                        byte[] val = rs.getBytes(3);
+                        if (pName == null || val == null) {
+                            continue;
+                        }
+                        if ("NAME".equals(pName)) {
+                            node.name = new String(val, java.nio.charset.StandardCharsets.UTF_8);
+                        } else if ("DESCRIPTION".equals(pName)) {
+                            node.description = new String(val, java.nio.charset.StandardCharsets.UTF_8);
+                        } else if ("lastModifiedBy".equals(pName) || "{http://www.jcp.org/jcr/1.0}lastModifiedBy".equals(pName)) {
+                            String modBy = new String(val, java.nio.charset.StandardCharsets.UTF_8).trim();
+                            if (!modBy.isEmpty()) {
+                                node.lastModifiedBy = modBy;
+                            }
+                        } else if ("jcr:lastModified".equals(pName)) {
+                            if (val.length == 8) {
+                                node.lastModified = java.nio.ByteBuffer.wrap(val).getLong();
+                            }
+                        }
+                    }
+                }
+
+                List<FrRepoNode> result = new ArrayList<>(byUuid.size());
+                for (FrRepoNode node : byUuid.values()) {
+                    if (node.name == null || node.name.isEmpty()) {
+                        node.name = node.uuid;
+                    }
+                    List<String> segments = new ArrayList<>();
+                    String curParent = node.parentUuid;
+                    int guard = 0;
+                    while (curParent != null && !"ROOTfr".equals(curParent) && guard++ < 32) {
+                        FrRepoNode parentNode = byUuid.get(curParent);
+                        if (parentNode == null) {
+                            break;
+                        }
+                        segments.add(0, parentNode.name != null ? parentNode.name : parentNode.uuid);
+                        curParent = parentNode.parentUuid;
+                    }
+                    if (segments.isEmpty()) {
+                        node.folderPath = "Root";
+                    } else {
+                        node.folderPath = String.join("/", segments);
+                    }
+                    String topSegment = segments.isEmpty()
+                            ? ("FOLDER".equals(node.reportType) ? node.name : "")
+                            : segments.get(0);
+                    node.isPrivate = "Users".equalsIgnoreCase(topSegment);
+                    result.add(node);
+                }
+
+                synchronized (frCacheLock) {
+                    frCachedNodes = Collections.unmodifiableList(result);
+                    frCacheTimestampMs = System.currentTimeMillis();
+                    return frCachedNodes;
+                }
+            } catch (java.sql.SQLException e) {
+                resetFrConnection();
+                if (attempt == 2) {
+                    LOG.log(Level.WARNING, "Failed to query Financial Reporting repository", e);
+                }
+            }
+        }
+        return Collections.emptyList();
+    }
+
+    private FrRepoNode findFrReportNode(String normFolder, String name, String reportType) throws BackendException {
+        List<FrRepoNode> nodes = loadFrRepositoryNodes(false);
+        List<FrRepoNode> exactFolderMatches = new ArrayList<>();
+        List<FrRepoNode> subFolderMatches = new ArrayList<>();
+        for (FrRepoNode node : nodes) {
+            if ("FOLDER".equals(node.reportType)) {
+                continue;
+            }
+            if (reportType != null && !reportType.equalsIgnoreCase(node.reportType)) {
+                continue;
+            }
+            if (node.name == null || !node.name.equalsIgnoreCase(name)) {
+                continue;
+            }
+            if (node.folderPath.equalsIgnoreCase(normFolder)) {
+                exactFolderMatches.add(node);
+            } else if (!node.internal && !node.hidden && !isInternalFrFolder(node.folderPath)
+                    && matchesFolderFilter(node.folderPath, normFolder)) {
+                subFolderMatches.add(node);
+            }
+        }
+        List<FrRepoNode> candidates = !exactFolderMatches.isEmpty() ? exactFolderMatches : subFolderMatches;
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        // Prefer primary types (FR_REPORT / FR_BOOK) over fragment types (FR_TEXT / FR_GRID / FR_ROW_COLUMN)
+        List<FrRepoNode> primary = new ArrayList<>();
+        for (FrRepoNode c : candidates) {
+            if ("FR_REPORT".equals(c.reportType) || "FR_BOOK".equals(c.reportType)) {
+                primary.add(c);
+            }
+        }
+        if (primary.size() == 1) {
+            return primary.get(0);
+        }
+        List<FrRepoNode> reportList = !primary.isEmpty() ? primary : candidates;
+        List<String> locations = new ArrayList<>();
+        for (FrRepoNode c : reportList) {
+            locations.add(c.folderPath + "/" + c.name + " (" + c.reportType + ")");
+        }
+        throw new BackendException(Kind.BAD_REQUEST,
+                "Multiple reports named '" + name + "' found: "
+                        + String.join(", ", locations) + "; specify folder and/or reportType");
+    }
+
+    private ReportDetail readFrReportDetail(FrRepoNode node) throws BackendException {
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                java.sql.Connection conn = getFrConnection();
+                String sql = "SELECT PROPERTY_VALUE FROM REPOSITORY_OBJECT_PROPERTIES "
+                        + "WHERE OBJECT_UUID = ? AND PROPERTY_NAME = 'jcr:data' "
+                        + "ORDER BY VERSION_NUMBER DESC";
+                byte[] raw = null;
+                try (java.sql.PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, node.uuid);
+                    try (java.sql.ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            raw = rs.getBytes(1);
+                        }
+                    }
+                }
+                if (raw == null) {
+                    raw = new byte[0];
+                }
+                DecodedText decoded = decodeFrBytes(raw);
+                return new ReportDetail(node.toReportInfo(), decoded.text, decoded.encoding);
+            } catch (java.sql.SQLException e) {
+                resetFrConnection();
+                if (attempt == 2) {
+                    throw new BackendException(Kind.HFM_ERROR,
+                            "Failed to read Financial Reporting object '" + node.name + "': " + e.getMessage(), e);
+                }
+            }
+        }
+        throw new BackendException(Kind.HFM_ERROR, "Failed to read Financial Reporting object '" + node.name + "'");
+    }
+
+    private void saveFrReport(ReportInfo ri, String code, String encoding, boolean overwrite) throws BackendException {
+        String normFolder = normalizeDocPath(ri.folder);
+        FrRepoNode existing = findFrReportNode(normFolder, ri.name, ri.reportType);
+        if (existing == null) {
+            throw new BackendException(Kind.BAD_REQUEST,
+                    "Financial Reporting object '" + ri.name + "' (" + ri.reportType + ") does not exist in "
+                            + displayFolder(normFolder)
+                            + "; new Financial Reporting objects must be created from an existing template in Workspace");
+        }
+        if (!overwrite) {
+            throw new BackendException(Kind.BAD_REQUEST,
+                    "Report '" + ri.name + "' (" + ri.reportType + ") already exists in " + existing.folderPath);
+        }
+        boolean zipCompressed = (encoding != null && encoding.toUpperCase(Locale.ROOT).startsWith("ZIP:"))
+                || "des".equalsIgnoreCase(existing.repoType)
+                || "rog".equalsIgnoreCase(existing.repoType)
+                || "ros".equalsIgnoreCase(existing.repoType)
+                || "rot".equalsIgnoreCase(existing.repoType)
+                || "rpt".equalsIgnoreCase(existing.repoType);
+        byte[] payload = encodeFrBytes(code, encoding, zipCompressed);
+        long now = ri.lastModified > 0 ? ri.lastModified : System.currentTimeMillis();
+        byte[] nowLongBytes = java.nio.ByteBuffer.allocate(8).putLong(now).array();
+        byte[] sizeLongBytes = java.nio.ByteBuffer.allocate(8).putLong(payload.length).array();
+        byte[] sizeStrBytes = Long.toString(payload.length).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                java.sql.Connection conn = getFrConnection();
+                boolean origAutoCommit = conn.getAutoCommit();
+                conn.setAutoCommit(false);
+                try {
+                    int maxVer = 1;
+                    try (java.sql.PreparedStatement ps = conn.prepareStatement(
+                            "SELECT MAX(VERSION_NUMBER) FROM REPOSITORY_OBJECT_PROPERTIES WHERE OBJECT_UUID = ?")) {
+                        ps.setString(1, existing.uuid);
+                        try (java.sql.ResultSet rs = ps.executeQuery()) {
+                            if (rs.next() && rs.getInt(1) > 0) {
+                                maxVer = rs.getInt(1);
+                            }
+                        }
+                    }
+                    upsertFrProperty(conn, existing.uuid, maxVer, "jcr:data", payload);
+                    upsertFrProperty(conn, existing.uuid, maxVer, "jcr:fileSize", sizeLongBytes);
+                    upsertFrProperty(conn, existing.uuid, maxVer, "fileSize", sizeStrBytes);
+                    upsertFrProperty(conn, existing.uuid, maxVer, "jcr:lastModified", nowLongBytes);
+                    upsertFrProperty(conn, existing.uuid, maxVer, "lastModified",
+                            Long.toString(now).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    if (ri.description != null) {
+                        upsertFrProperty(conn, existing.uuid, maxVer, "DESCRIPTION",
+                                ri.description.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    if (notBlank(ri.owner)) {
+                        byte[] ownerBytes = ri.owner.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        upsertFrProperty(conn, existing.uuid, maxVer, "lastModifiedBy", ownerBytes);
+                        upsertFrProperty(conn, existing.uuid, maxVer, "{http://www.jcp.org/jcr/1.0}lastModifiedBy", ownerBytes);
+                    }
+                    conn.commit();
+                    synchronized (frCacheLock) {
+                        frCachedNodes = null;
+                    }
+                    return;
+                } catch (java.sql.SQLException e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(origAutoCommit);
+                }
+            } catch (java.sql.SQLException e) {
+                resetFrConnection();
+                if (attempt == 2) {
+                    throw new BackendException(Kind.HFM_ERROR,
+                            "Failed to save Financial Reporting object '" + ri.name + "': " + e.getMessage(), e);
+                }
+            }
+        }
+    }
+
+    private static void upsertFrProperty(java.sql.Connection conn, String uuid, int version,
+                                         String propName, byte[] value) throws java.sql.SQLException {
+        try (java.sql.PreparedStatement upd = conn.prepareStatement(
+                "UPDATE REPOSITORY_OBJECT_PROPERTIES SET PROPERTY_VALUE = ? "
+                        + "WHERE OBJECT_UUID = ? AND PROPERTY_NAME = ? AND VERSION_NUMBER = ?")) {
+            upd.setBytes(1, value);
+            upd.setString(2, uuid);
+            upd.setString(3, propName);
+            upd.setInt(4, version);
+            if (upd.executeUpdate() > 0) {
+                return;
+            }
+        }
+        try (java.sql.PreparedStatement ins = conn.prepareStatement(
+                "INSERT INTO REPOSITORY_OBJECT_PROPERTIES "
+                        + "(OBJECT_UUID, PROPERTY_NAME, PROPERTY_VALUE, VERSION_NUMBER, VERSION_COPIED) "
+                        + "VALUES (?, ?, ?, ?, 0)")) {
+            ins.setString(1, uuid);
+            ins.setString(2, propName);
+            ins.setBytes(3, value);
+            ins.setInt(4, version);
+            ins.executeUpdate();
+        }
+    }
+
+    private static DecodedText decodeFrBytes(byte[] bytes) {
+        if (bytes.length >= 4 && (bytes[0] & 0xFF) == 0x50 && (bytes[1] & 0xFF) == 0x4B
+                && (bytes[2] & 0xFF) == 0x03 && (bytes[3] & 0xFF) == 0x04) {
+            try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(
+                    new java.io.ByteArrayInputStream(bytes))) {
+                java.util.zip.ZipEntry entry = zis.getNextEntry();
+                if (entry != null) {
+                    java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = zis.read(buf)) > 0) {
+                        bos.write(buf, 0, n);
+                    }
+                    DecodedText inner = decodeBytes(bos.toByteArray());
+                    return new DecodedText(inner.text, "ZIP:" + inner.encoding);
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return decodeBytes(bytes);
+    }
+
+    private static byte[] encodeFrBytes(String text, String encoding, boolean zipCompressed) throws BackendException {
+        String innerEnc = encoding != null && encoding.toUpperCase(Locale.ROOT).startsWith("ZIP:")
+                ? encoding.substring(4)
+                : (encoding == null ? "UTF-8" : encoding);
+        byte[] raw = encodeBytes(text, innerEnc);
+        if (!zipCompressed) {
+            return raw;
+        }
+        try {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(bos)) {
+                java.util.zip.ZipEntry entry = new java.util.zip.ZipEntry("compressed");
+                zos.putNextEntry(entry);
+                zos.write(raw);
+                zos.closeEntry();
+            }
+            return bos.toByteArray();
+        } catch (IOException e) {
+            throw new BackendException(Kind.HFM_ERROR, "Failed to compress FR report payload: " + e.getMessage(), e);
+        }
+    }
+
+    private static boolean isInternalFrFolder(String folderPath) {
+        if (!notBlank(folderPath) || "Root".equalsIgnoreCase(folderPath)) {
+            return false;
+        }
+        String norm = normalizeDocPath(folderPath);
+        int slash = norm.indexOf('/');
+        String top = slash > 0 ? norm.substring(0, slash) : norm;
+        return FR_INTERNAL_TOP_FOLDERS.contains(top.toUpperCase(Locale.ROOT));
+    }
+
+    private static boolean matchesFolderFilter(String itemFolder, String filterFolder) {
+        if (!notBlank(filterFolder) || "Root".equalsIgnoreCase(filterFolder)) {
+            return true;
+        }
+        String normFilter = normalizeDocPath(filterFolder).toLowerCase(Locale.ROOT);
+        String normItem = normalizeDocPath(itemFolder).toLowerCase(Locale.ROOT);
+        return normItem.equals(normFilter) || normItem.startsWith(normFilter + "/");
+    }
+
+    private static boolean matchesReportQuery(ReportInfo ri, String query) {
+        if (!notBlank(query)) {
+            return true;
+        }
+        String raw = query.trim();
+        if ("*".equals(raw)) {
+            return true;
+        }
+        String name = ri.name == null ? "" : ri.name.toLowerCase(Locale.ROOT);
+        String desc = ri.description == null ? "" : ri.description.toLowerCase(Locale.ROOT);
+        String folder = ri.folder == null ? "" : ri.folder.toLowerCase(Locale.ROOT);
+        String combined = folder + "/" + name + " " + desc;
+        if (raw.contains("*")) {
+            String regex = "\\Q" + raw.toLowerCase(Locale.ROOT).replace("*", "\\E.*\\Q") + "\\E";
+            Pattern p = Pattern.compile(regex, Pattern.DOTALL);
+            return p.matcher(name).matches() || p.matcher(desc).matches()
+                    || p.matcher(folder).matches() || p.matcher(combined).find();
+        }
+        String lower = raw.toLowerCase(Locale.ROOT);
+        if (combined.contains(lower)) {
+            return true;
+        }
+        String[] tokens = lower.split("\\s+");
+        for (String tok : tokens) {
+            if (tok.isEmpty()) {
+                continue;
+            }
+            if (combined.contains(tok)) {
+                continue;
+            }
+            // Handle common financial reporting abbreviations such as "Distribution" -> "Distrib" / "_DC"
+            if (tok.length() >= 7 && combined.contains(tok.substring(0, 7))) {
+                continue;
+            }
+            if (tok.startsWith("distrib") && (name.contains("_dc") || name.endsWith("dc"))) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private static int reportTypePriority(String reportType) {
+        if (reportType == null) {
+            return 50;
+        }
+        switch (reportType.toUpperCase(Locale.ROOT)) {
+            case "FR_BOOK":
+            case "FR_REPORT":
+            case "JOURNAL":
+            case "INTERCOMPANY":
+            case "IC_MATCHING_TEMPLATE":
+            case "IC_TRANSACTION":
+            case "IC_MONITOR":
+            case "IC_MATCH_BY_ACCOUNT":
+            case "IC_MATCH_BY_TRANS_ID":
+            case "DATA_EXPLORER":
+            case "HYP":
+                return 10;
+            case "FR_BATCH":
+            case "FR_SNAPSHOT_BOOK":
+            case "FR_SNAPSHOT_REPORT":
+                return 20;
+            case "FR_GRID":
+            case "FR_ROW_COLUMN":
+            case "FR_TEXT":
+                return 30;
+            case "FOLDER":
+                return 40;
+            default:
+                return 50;
         }
     }
 

@@ -840,13 +840,17 @@ public final class MockHfmBackend implements HfmBackend {
             if (info.isPrivate && (!q.includePrivate || !user.equalsIgnoreCase(info.owner))) {
                 continue;
             }
-            if (folder != null && !folder.equalsIgnoreCase(info.folder)) {
-                continue;
+            if (folder != null && !"Root".equalsIgnoreCase(folder)) {
+                String itemFolder = normalizeFolder(info.folder).toLowerCase(Locale.ROOT);
+                String filterFolder = folder.toLowerCase(Locale.ROOT);
+                if (!itemFolder.equals(filterFolder) && !itemFolder.startsWith(filterFolder + "/")) {
+                    continue;
+                }
             }
             if (q.reportTypes != null && !q.reportTypes.isEmpty() && !q.reportTypes.contains(info.reportType)) {
                 continue;
             }
-            if (!matches(info.name, q.query) && !matches(info.description, q.query)) {
+            if (!matchesReport(info, q.query)) {
                 continue;
             }
             out.add(info);
@@ -858,6 +862,28 @@ public final class MockHfmBackend implements HfmBackend {
         return out;
     }
 
+    private boolean matchesReport(ReportInfo info, String query) {
+        if (query == null || query.trim().isEmpty() || "*".equals(query.trim())) {
+            return true;
+        }
+        if (matches(info.name, query) || matches(info.description, query) || matches(info.folder, query)) {
+            return true;
+        }
+        String combined = ((info.folder == null ? "" : info.folder) + "/"
+                + (info.name == null ? "" : info.name) + " "
+                + (info.description == null ? "" : info.description)).toLowerCase(Locale.ROOT);
+        for (String tok : query.trim().toLowerCase(Locale.ROOT).split("\\s+")) {
+            if (tok.isEmpty()) {
+                continue;
+            }
+            if (combined.contains(tok) || (tok.length() >= 7 && combined.contains(tok.substring(0, 7)))) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
     @Override
     public ReportDetail getReport(BackendSession session, String folder, String name, String reportType)
             throws BackendException {
@@ -865,16 +891,35 @@ public final class MockHfmBackend implements HfmBackend {
         String f = normalizeFolder(folder);
         if (reportType != null && !reportType.trim().isEmpty()) {
             ReportDetail d = reports.get(reportKey(f, reportType.trim(), name));
-            if (d == null) {
-                throw new BackendException(BackendException.Kind.BAD_REQUEST,
-                        "No report '" + name + "' (" + reportType + ") in " + f);
+            if (d != null) {
+                return d;
             }
-            return d;
+            if ("Root".equalsIgnoreCase(f)) {
+                List<ReportDetail> subMatches = new ArrayList<>();
+                for (ReportDetail cand : reports.values()) {
+                    if (cand.info.reportType.equalsIgnoreCase(reportType.trim())
+                            && cand.info.name.equalsIgnoreCase(name)) {
+                        subMatches.add(cand);
+                    }
+                }
+                if (subMatches.size() == 1) {
+                    return subMatches.get(0);
+                }
+            }
+            throw new BackendException(BackendException.Kind.BAD_REQUEST,
+                    "No report '" + name + "' (" + reportType + ") in " + f);
         }
         List<ReportDetail> matches = new ArrayList<>();
         for (ReportDetail d : reports.values()) {
             if (d.info.folder.equalsIgnoreCase(f) && d.info.name.equalsIgnoreCase(name)) {
                 matches.add(d);
+            }
+        }
+        if (matches.isEmpty() && "Root".equalsIgnoreCase(f)) {
+            for (ReportDetail d : reports.values()) {
+                if (d.info.name.equalsIgnoreCase(name)) {
+                    matches.add(d);
+                }
             }
         }
         if (matches.isEmpty()) {

@@ -46,11 +46,15 @@ group, balance, who created or last acted) and hfm_get_journal reads one with it
 debit/credit totals. Journal statuses are WORKING, SUBMITTED, APPROVED, REJECTED and POSTED; only a
 posted journal is in the reported numbers.
 
-Reports: hfm_list_reports lists report documents in HFM Document Manager (Journal, Intercompany,
-IC Matching, Data Explorer, Hyperion reports) with their type, folder, description, security class
-and owner. hfm_get_report reads a report's metadata, parsed sections and full report definition
-code/script. hfm_view_report executes/renders a report (with optional POV, entity/partner or
-format overrides) and returns the rendered report output and exported file path.
+Reports: hfm_list_reports lists both Financial Reporting (FR) reports and books in the EPM Workspace
+repository (FR_REPORT, FR_BOOK, FR_SNAPSHOT_BOOK, FR_SNAPSHOT_REPORT, FR_BATCH, FR_GRID,
+FR_ROW_COLUMN, FR_TEXT, FOLDER) across all folders and HFM Document Manager reports (JOURNAL,
+INTERCOMPANY, IC_MATCHING_TEMPLATE, IC_TRANSACTION, IC_MONITOR, IC_MATCH_BY_ACCOUNT,
+IC_MATCH_BY_TRANS_ID, DATA_EXPLORER, HYP), with their type, folder, description, security class and
+owner, plus a `folders` list. hfm_get_report reads a report's or book's metadata, parsed `sections`
+(including FR grid rows, columns, formulas, POV, header text, or book chapters and member selections)
+and full report definition `code` / XML. hfm_view_report executes/renders an HFM report or renders a
+Financial Reporting specification view and returns the rendered `content` and exported file path.
 
 Process control: hfm_get_process_status shows each process unit's (Scenario, Year, Period, Value,
 Entity) state per phase - Not Started, First Pass, Review Level n, Submitted, Approved, Published -
@@ -112,7 +116,9 @@ JOURNAL_POV = Field(description="Scenario, Year, Period and Value of the journal
                                 "{'Scenario': 'Actual', 'Year': '2025', 'Period': 'Dec', 'Value': '<Entity Curr Adjs>'}. "
                                 "Omitted ones use the default POV.")
 JOURNAL_ACTIONS = ("SUBMIT", "UNSUBMIT", "APPROVE", "REJECT", "POST", "UNPOST", "DELETE")
-REPORT_TYPE = Literal["JOURNAL", "INTERCOMPANY", "IC_MATCHING_TEMPLATE", "IC_TRANSACTION", "IC_MONITOR",
+REPORT_TYPE = Literal["FR_REPORT", "FR_BOOK", "FR_SNAPSHOT_BOOK", "FR_SNAPSHOT_REPORT", "FR_BATCH",
+                      "FR_GRID", "FR_ROW_COLUMN", "FR_TEXT", "FOLDER",
+                      "JOURNAL", "INTERCOMPANY", "IC_MATCHING_TEMPLATE", "IC_TRANSACTION", "IC_MONITOR",
                       "IC_MATCH_BY_ACCOUNT", "IC_MATCH_BY_TRANS_ID", "DATA_EXPLORER", "HYP"]
 REPORT_FORMAT = Literal["HTML", "HFM", "PDF", "RTF", "XLS", "XLSX"]
 ENTITIES = Field(description="Entities, or HFM member lists such as '{Group.[Base]}'. Omit for the default-POV entity.")
@@ -266,41 +272,45 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
     @server.tool(annotations=READ_ONLY)
     async def hfm_list_reports(
         report_type: Annotated[list[REPORT_TYPE] | None,
-                               Field(description="Only these report types (default: all)")] = None,
+                               Field(description="Only these report types (default: all FR and HFM report types)")] = None,
         folder: Annotated[str | None,
-                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+                          Field(description="Folder path in Financial Reporting / HFM Document Manager "
+                                            "(default: 'Root', which searches all folders recursively)")] = None,
         query: Annotated[str | None,
-                         Field(description="Case-insensitive text filter on report name or description")] = None,
+                         Field(description="Case-insensitive text filter on report name, folder or description")] = None,
         include_private: Annotated[bool, Field(description="Include private reports owned by the user")] = True,
     ) -> dict[str, Any]:
-        """List report documents in HFM Document Manager, with their reportType, fileType, folder,
-        description, securityClass, private flag, owner and lastModified timestamp, plus `byType`
-        counts. Use hfm_get_report to read a report's code/metadata or hfm_view_report to execute it."""
+        """List Financial Reporting (FR_REPORT, FR_BOOK, ...) and HFM Document Manager reports across
+        folders, with their reportType, fileType, folder, description, securityClass, private flag,
+        owner and lastModified timestamp, plus `byType` counts and `folders`. Use hfm_get_report to
+        read a report's or book's code/XML and parsed sections, or hfm_view_report to render it."""
         body = {"reportTypes": report_type or [], "folder": folder, "query": query,
                 "includePrivate": include_private}
         return await call(client.post, "/api/v1/reports/list", body)
 
     @server.tool(annotations=READ_ONLY)
     async def hfm_get_report(
-        name: Annotated[str, Field(description="Exact report name in HFM Document Manager")],
+        name: Annotated[str, Field(description="Report or book name (or '/Folder/Name') in Financial Reporting or HFM Document Manager")],
         report_type: Annotated[REPORT_TYPE | None,
                                Field(description="Report type if multiple reports share the same name")] = None,
         folder: Annotated[str | None,
-                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+                          Field(description="Folder path (default: 'Root', which also searches subfolders)")] = None,
     ) -> dict[str, Any]:
-        """Read a report's document metadata (reportType, fileType, folder, description, securityClass,
-        owner, private, lastModified), its parsed `sections` ([Header], [PointOfView], [Filter],
-        [Options], [Columns], ...) and its full report definition `code` / script."""
+        """Read a Financial Reporting or HFM report's metadata (reportType, fileType, folder,
+        description, securityClass, owner, private, lastModified), its parsed `sections` (for FR
+        reports: [General], [Header], [PointOfView], [Rows], [Columns]; for FR books: [General],
+        [PointOfView], [Chapters]; for HFM reports: [Header], [PointOfView], [Filter], [Columns], ...)
+        and its full report definition `code` / XML."""
         body = {"name": name, "reportType": report_type, "folder": folder}
         return await call(client.post, "/api/v1/reports/get", body)
 
     @server.tool(annotations=READ_ONLY)
     async def hfm_view_report(
-        name: Annotated[str, Field(description="Exact report name in HFM Document Manager")],
+        name: Annotated[str, Field(description="Report or book name (or '/Folder/Name') in Financial Reporting or HFM Document Manager")],
         report_type: Annotated[REPORT_TYPE | None,
                                Field(description="Report type if multiple reports share the same name")] = None,
         folder: Annotated[str | None,
-                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+                          Field(description="Folder path (default: 'Root', which also searches subfolders)")] = None,
         format: Annotated[REPORT_FORMAT,
                           Field(description="Rendered output format (default 'HTML')")] = "HTML",
         pov: Annotated[dict[str, str] | None,
