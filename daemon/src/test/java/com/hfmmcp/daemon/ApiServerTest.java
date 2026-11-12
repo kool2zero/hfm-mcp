@@ -719,6 +719,22 @@ class ApiServerTest {
         JsonNode updPlan = ok(call("POST", "/api/v1/reports/preview-save",
                 "{\"name\":\"RFJUN_DC\",\"sections\":{\"PointOfView\":{\"Scenario\":\"Budget\"}}}", KEY, sid));
         assertEquals("Budget", updPlan.at("/sections/PointOfView/Scenario").asText());
+
+        // Copy FR_REPORT via copyFrom + replacements + Rows section update
+        JsonNode copyPlan = ok(call("POST", "/api/v1/reports/preview-save",
+                "{\"name\":\"RFJUN_DC_TEST\",\"copyFrom\":\"RFJUN_DC\","
+                        + "\"replacements\":[{\"find\":\"DISTRIBUTION SCHEDULE\",\"replace\":\"DISTRIBUTION SCHEDULE TEST\"}],"
+                        + "\"sections\":{\"Rows\":{\"Row 1\":\"Account=Sales, COGS\"}}}", KEY, sid));
+        assertEquals("RF JUN Reports/RFJUN_DC", copyPlan.get("copiedFrom").asText());
+        assertEquals(1, copyPlan.get("replacementsApplied").asInt());
+        assertEquals("RFJUN_DC_TEST", copyPlan.at("/sections/General/Name").asText());
+        assertEquals("Account=Sales, COGS", copyPlan.at("/sections/Rows/Row 1").asText());
+        ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + copyPlan.get("planId").asText() + "\"}", KEY, sid));
+
+        JsonNode gotCopy = ok(call("POST", "/api/v1/reports/get", "{\"name\":\"RFJUN_DC_TEST\"}", KEY, sid));
+        assertEquals("RF JUN Reports", gotCopy.get("folder").asText());
+        assertEquals("Account=Sales, COGS", gotCopy.at("/sections/Rows/Row 1").asText());
+        assertTrue(gotCopy.at("/sections/Header/Text 1").asText().contains("DISTRIBUTION SCHEDULE TEST"));
     }
 
     // ---------------------------------------------------------------- extract and copy

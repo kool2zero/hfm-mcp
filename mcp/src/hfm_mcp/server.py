@@ -473,30 +473,40 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
 
     @server.tool(annotations=PREVIEW)
     async def hfm_preview_report_save(
-        name: Annotated[str, Field(description="Report document name in HFM Document Manager")],
+        name: Annotated[str, Field(description="Report or book name (e.g. 'MONCOMP_DC_RF_TEST')")],
         report_type: Annotated[REPORT_TYPE | None,
-                               Field(description="Report type (required when creating a new report; optional "
-                                                 "when updating an existing one)")] = None,
+                               Field(description="Report type (required when creating a new report from scratch; "
+                                                 "optional when updating an existing one or using copy_from)")] = None,
         folder: Annotated[str | None,
-                          Field(description="Folder path in HFM Document Manager (default: 'Root')")] = None,
+                          Field(description="Folder path (defaults to the existing or copy_from report's folder, "
+                                            "or 'Root')")] = None,
+        copy_from: Annotated[str | None,
+                             Field(description="Name (or 'Folder/Name') of an existing report or book to copy as the "
+                                               "starting definition and repository template (e.g. 'MONCOMP_DC_RF'). "
+                                               "Automatically updates the root XML name to `name`.")] = None,
+        replacements: Annotated[list[dict[str, str]] | None,
+                                Field(description="List of {'find': '...', 'replace': '...'} edits applied in order to "
+                                                  "the report definition code (matching either verbatim text or "
+                                                  "XML-attribute-escaped strings inside Financial Reporting XML).")] = None,
         code: Annotated[str | None,
-                        Field(description="Full report definition code/script. When updating an existing report, "
-                                          "you can either supply the updated `code` or pass `sections` to update "
-                                          "specific [Section] key=value entries in place.")] = None,
+                        Field(description="Full report definition code/XML. Omit when updating an existing report or "
+                                          "using `copy_from` with `replacements` or `sections`.")] = None,
         sections: Annotated[dict[str, dict[str, str]] | None,
                             Field(description="Section key=value overrides to apply to the report code, e.g. "
-                                              "{'PointOfView': {'Period': 'Nov'}, 'Options': {'Entity': 'UK01'}}")] = None,
+                                              "{'PointOfView': {'Period': 'Sep'}, 'Rows': {'Row 11': 'Custom3=629, 630, 633', "
+                                              "'ID=23': 'Custom3=651, 684'}}")] = None,
         description: Annotated[str | None, Field(description="Report description")] = None,
         security_class: Annotated[str | None, Field(description="HFM security class (default '[Default]')")] = None,
         private: Annotated[bool | None, Field(description="Whether the report is private to the owner")] = None,
     ) -> dict[str, Any]:
-        """Prepare creating or updating an HFM report definition WITHOUT saving it. Validates any
-        [PointOfView] members against HFM metadata and returns a single-use `planId`, the new `code`
-        and `sections`, and `previousCode` when replacing an existing report. Show the changes to the
-        user and get their explicit confirmation before calling hfm_execute_action."""
-        body = {"name": name, "reportType": report_type, "folder": folder, "code": code,
-                "sections": sections, "description": description, "securityClass": security_class,
-                "private": private}
+        """Prepare creating, copying or updating a Financial Reporting or HFM report definition WITHOUT saving
+        it. Supports copying an existing report via `copy_from` and editing its rows/XML via `replacements`
+        or `sections` without sending the full XML. Validates [PointOfView] members against HFM metadata and
+        returns a single-use `planId` and the updated `sections`. Show the changes to the user and get their
+        explicit confirmation before calling hfm_execute_action."""
+        body = {"name": name, "reportType": report_type, "folder": folder, "copyFrom": copy_from,
+                "replacements": replacements, "code": code, "sections": sections, "description": description,
+                "securityClass": security_class, "private": private}
         return await call(client.post, "/api/v1/reports/preview-save", body)
 
     @server.tool(annotations=EXECUTE)

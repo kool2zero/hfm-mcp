@@ -15,13 +15,7 @@ No Python and no administrator rights needed. Walks through:
 Re-run it to upgrade or change settings; your previous answers are the defaults.
 Remove everything with -Uninstall.
 
-  # Private repository (token needs read access to the repository's contents):
-  $env:HFM_MCP_GITHUB_TOKEN = '<token>'
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  irm 'https://api.github.com/repos/kool2zero/hfm-mcp/contents/install-client.ps1' -Headers @{
-      Authorization = "Bearer $env:HFM_MCP_GITHUB_TOKEN"; Accept = 'application/vnd.github.raw' } | iex
-
-  # Public repository:
   irm https://github.com/kool2zero/hfm-mcp/releases/latest/download/install-client.ps1 | iex
 
   # Offline:

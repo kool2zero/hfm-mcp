@@ -211,6 +211,15 @@ public final class ReportService {
                                            String code, Map<String, Map<String, String>> sections,
                                            String description, String securityClass, Boolean isPrivate,
                                            String fileType) {
+        return previewSave(s, name, reportType, folder, code, sections, description, securityClass, isPrivate,
+                fileType, null, null);
+    }
+
+    public Map<String, Object> previewSave(UserSession s, String name, String reportType, String folder,
+                                           String code, Map<String, Map<String, String>> sections,
+                                           String description, String securityClass, Boolean isPrivate,
+                                           String fileType, String copyFrom,
+                                           List<Map<String, String>> replacements) {
         requireAllowed(SAVE);
         if (blank(name)) {
             throw ApiException.badRequest("bad_request", "name is required");
@@ -233,45 +242,77 @@ public final class ReportService {
         String rType = checkOptionalChoice("reportType", reportType, REPORT_TYPES);
         String fType = checkOptionalChoice("fileType", fileType, FILE_TYPES);
 
-        ReportDetail existing = findExisting(s, splitFolder, trimmedName, rType);
-        if (existing == null && rType == null) {
+        ReportDetail source = null;
+        if (!blank(copyFrom)) {
+            String[] srcSplit = splitFolderAndName(splitFolder, copyFrom.trim());
+            source = findExisting(s, srcSplit[0], srcSplit[1], rType);
+            if (source == null && !blank(srcSplit[0]) && !"Root".equalsIgnoreCase(normalizeFolder(srcSplit[0]))) {
+                source = findExisting(s, "Root", srcSplit[1], rType);
+            }
+            if (source == null) {
+                throw ApiException.badRequest("bad_request",
+                        "Source report '" + copyFrom.trim() + "' not found");
+            }
+        }
+
+        String lookupType = rType != null ? rType : (source != null ? source.info.reportType : null);
+        String lookupFolder = !blank(splitFolder) ? splitFolder : (source != null ? source.info.folder : null);
+        ReportDetail existing = findExisting(s, lookupFolder, trimmedName, lookupType);
+        ReportDetail base = existing != null ? existing : source;
+
+        if (base == null && rType == null) {
             throw ApiException.badRequest("bad_request",
-                    "reportType is required when creating a new report (one of "
+                    "reportType (or copyFrom) is required when creating a new report (one of "
                             + String.join(", ", REPORT_TYPES) + ")");
         }
-        String effectiveType = rType != null ? rType : existing.info.reportType;
-        String effectiveFileType = fType != null ? fType : (existing != null ? existing.info.fileType : defaultFileTypeFor(effectiveType));
-        String effectiveFolder = existing != null && (blank(splitFolder) || "Root".equalsIgnoreCase(normalizeFolder(splitFolder)))
-                ? existing.info.folder
-                : (!blank(splitFolder) ? normalizeFolder(splitFolder) : "Root");
+        String effectiveType = rType != null ? rType : base.info.reportType;
+        String effectiveFileType = fType != null ? fType : (base != null ? base.info.fileType : defaultFileTypeFor(effectiveType));
+        String effectiveFolder = (!blank(splitFolder) && !"Root".equalsIgnoreCase(normalizeFolder(splitFolder)))
+                ? normalizeFolder(splitFolder)
+                : (base != null && !blank(base.info.folder) ? base.info.folder : "Root");
         String effectiveDesc = description != null
                 ? description
-                : (existing != null && existing.info.description != null ? existing.info.description : "");
+                : (existing != null && existing.info.description != null
+                        ? existing.info.description
+                        : (source != null && source.info.description != null ? source.info.description : ""));
         String effectiveSec = !blank(securityClass)
                 ? securityClass.trim()
-                : (existing != null && !blank(existing.info.securityClass) ? existing.info.securityClass : "[Default]");
+                : (base != null && !blank(base.info.securityClass) ? base.info.securityClass : "[Default]");
         boolean effectivePriv = isPrivate != null
                 ? isPrivate
-                : (existing != null && existing.info.isPrivate);
-        String effectiveEncoding = existing != null && !blank(existing.encoding)
-                ? existing.encoding
+                : (base != null && base.info.isPrivate);
+        String effectiveEncoding = base != null && !blank(base.encoding)
+                ? base.encoding
                 : defaultEncodingFor(effectiveType);
 
         String baseCode;
         if (code != null) {
             baseCode = code;
+        } else if (source != null) {
+            baseCode = source.code == null ? "" : source.code;
+            if (isXmlReportCode(baseCode) && !trimmedName.equals(source.info.name)) {
+                baseCode = updateFrXmlRootName(baseCode, trimmedName);
+            }
         } else if (existing != null) {
             baseCode = existing.code == null ? "" : existing.code;
         } else if (sections != null && !sections.isEmpty()) {
             baseCode = "";
         } else {
             throw ApiException.badRequest("bad_request",
-                    "code (or sections) is required when creating or updating a report");
+                    "code (or copyFrom / sections) is required when creating or updating a report");
+        }
+
+        int replacementsApplied = 0;
+        String afterReplacements = baseCode;
+        if (replacements != null && !replacements.isEmpty()) {
+            ReplacementResult rr = applyReplacements(afterReplacements, replacements);
+            afterReplacements = rr.code;
+            replacementsApplied = rr.totalOccurrences;
         }
 
         String finalCode = sections != null && !sections.isEmpty()
-                ? applySections(baseCode, sections)
-                : baseCode;
+                ? applySections(afterReplacements, sections)
+                : afterReplacements;
         if (finalCode.length() > MAX_CODE_CHARS) {
             throw ApiException.badRequest("bad_request",
                     "Report code exceeds limit of " + MAX_CODE_CHARS + " characters");
@@ -282,7 +323,8 @@ public final class ReportService {
 
         ReportInfo info = new ReportInfo(trimmedName, effectiveType, effectiveFileType, effectiveFolder,
                 effectiveDesc, effectiveSec, effectivePriv, s.userName(), System.currentTimeMillis());
-        ReportDetail target = new ReportDetail(info, finalCode, effectiveEncoding);
+        ReportDetail target = new ReportDetail(info, finalCode, effectiveEncoding,
+                source != null ? source.info : (existing != null ? existing.info : null));
 
         Plan plan = newPlan(s, SAVE, target, existing != null);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -291,19 +333,32 @@ public final class ReportService {
         out.put("action", SAVE);
         out.putAll(summaryMap(info));
         out.put("replacesExisting", existing != null);
+        if (source != null) {
+            out.put("copiedFrom", source.info.folder + "/" + source.info.name);
+        }
+        if (replacements != null && !replacements.isEmpty()) {
+            out.put("replacementsApplied", replacementsApplied);
+        }
         out.put("encoding", effectiveEncoding);
+        out.put("charCount", finalCode.length());
         out.put("lineCount", countLines(finalCode));
         out.put("sections", parsedSections);
-        out.put("code", finalCode);
-        if (existing != null && existing.code != null) {
-            out.put("previousCode", existing.code);
+        if (finalCode.length() <= 20_000) {
+            out.put("code", finalCode);
+            if (existing != null && existing.code != null && existing.code.length() <= 20_000) {
+                out.put("previousCode", existing.code);
+            }
+        } else {
+            out.put("code", finalCode.substring(0, 4_000));
+            out.put("codeTruncated", true);
         }
         if (!warnings.isEmpty()) {
             out.put("warnings", warnings);
         }
         out.put("effect", (existing != null
                 ? "Replaces existing " + effectiveType + " report '" + trimmedName + "' in " + effectiveFolder
-                : "Creates new " + effectiveType + " report '" + trimmedName + "' in " + effectiveFolder)
+                : "Creates new " + effectiveType + " report '" + trimmedName + "' in " + effectiveFolder
+                        + (source != null ? " (copied from " + source.info.name + ")" : ""))
                 + ". Nothing is saved until execute is called.");
         out.put("next", "Show the report metadata and code changes to the user. Only if they confirm, call execute with this planId.");
         return out;
@@ -673,12 +728,34 @@ public final class ReportService {
             for (int s = 0; s < segs.getLength(); s++) {
                 org.w3c.dom.Element seg = (org.w3c.dom.Element) segs.item(s);
                 int idx = parseIntSafe(seg.getAttribute("INDEX"), s);
+                org.w3c.dom.NodeList segDerived = seg.getElementsByTagName("DERIVEDEXPRESSION");
+                if (segDerived.getLength() > 0) {
+                    String df = ((org.w3c.dom.Element) segDerived.item(0)).getAttribute("VALUE");
+                    if (!blank(df) && !"@TEXT".equalsIgnoreCase(df.trim())) {
+                        if (isRow) {
+                            rowFormulas.putIfAbsent(idx, df.trim());
+                        } else {
+                            colFormulas.putIfAbsent(idx, df.trim());
+                        }
+                    }
+                }
                 org.w3c.dom.NodeList segLayers = seg.getElementsByTagName("SEGMENTLAYER");
                 List<String> parts = new ArrayList<>();
                 for (int sl = 0; sl < segLayers.getLength(); sl++) {
                     org.w3c.dom.Element segLayer = (org.w3c.dom.Element) segLayers.item(sl);
                     int layerIdx = parseIntSafe(segLayer.getAttribute("LAYERINDEX"), sl);
                     String dim = layerIdx >= 0 && layerIdx < dimNames.size() ? dimNames.get(layerIdx) : ("Layer" + layerIdx);
+                    org.w3c.dom.NodeList mlist = segLayer.getElementsByTagName("METADATAEXPRESSION");
+                    for (int m = 0; m < mlist.getLength(); m++) {
+                        String mh = ((org.w3c.dom.Element) mlist.item(m)).getAttribute("HEADING");
+                        if (!blank(mh) && !mh.toLowerCase(Locale.ROOT).contains("hidden") && !mh.startsWith("<<")) {
+                            if (isRow) {
+                                rowCustomHeadings.putIfAbsent(idx, mh.trim());
+                            } else {
+                                colCustomHeadings.putIfAbsent(idx, mh.trim());
+                            }
+                        }
+                    }
                     List<String> exprs = allMetadataExpressions(segLayer);
                     if (!exprs.isEmpty()) {
                         parts.add(dim + "=" + String.join(", ", exprs));
@@ -753,7 +830,7 @@ public final class ReportService {
     }
 
     private static final java.util.regex.Pattern SQL_MEMBER_EXPR = java.util.regex.Pattern.compile(
-            "(?i)WHERE\\s+([A-Za-z0-9_]+)\\(\\s*\"([^\"]+)\"");
+            "([A-Za-z0-9_]+)\\(\\s*\"([^\"]+)\"");
     private static final java.util.regex.Pattern XML_FILTER_OP = java.util.regex.Pattern.compile(
             "<COMPOSITEOPERATION\\s+TYPE=\"Filter\">(.*?)</COMPOSITEOPERATION>", java.util.regex.Pattern.DOTALL);
     private static final java.util.regex.Pattern XML_OP = java.util.regex.Pattern.compile(
@@ -805,11 +882,17 @@ public final class ReportService {
             }
         }
         if (t.toUpperCase(Locale.ROOT).startsWith("SELECT ")) {
-            java.util.regex.Matcher m = SQL_MEMBER_EXPR.matcher(t);
-            if (m.find()) {
+            int whereIdx = t.toUpperCase(Locale.ROOT).indexOf("WHERE ");
+            String scope = whereIdx >= 0 ? t.substring(whereIdx + 6) : t;
+            java.util.regex.Matcher m = SQL_MEMBER_EXPR.matcher(scope);
+            List<String> parts = new ArrayList<>();
+            while (m.find()) {
                 String fn = m.group(1);
                 String member = m.group(2);
-                return "Member".equalsIgnoreCase(fn) ? member : (fn + "(" + member + ")");
+                parts.add("Member".equalsIgnoreCase(fn) ? member : (fn + "(" + member + ")"));
+            }
+            if (!parts.isEmpty()) {
+                return String.join(", ", parts);
             }
         }
         return t;
@@ -1217,6 +1300,112 @@ public final class ReportService {
         return u;
     }
 
+    private static final class ReplacementResult {
+        final String code;
+        final int totalOccurrences;
+
+        ReplacementResult(String code, int totalOccurrences) {
+            this.code = code;
+            this.totalOccurrences = totalOccurrences;
+        }
+    }
+
+    private static ReplacementResult applyReplacements(String code, List<Map<String, String>> replacements) {
+        String current = code == null ? "" : code;
+        boolean isXml = isXmlReportCode(current);
+        int total = 0;
+        for (int i = 0; i < replacements.size(); i++) {
+            Map<String, String> item = replacements.get(i);
+            if (item == null) {
+                continue;
+            }
+            String find = firstNonNullKey(item, "find", "target", "old", "search");
+            String replace = firstNonNullKey(item, "replace", "replacement", "new", "value");
+            if (find == null || find.isEmpty()) {
+                throw ApiException.badRequest("bad_request",
+                        "replacements[" + i + "].find is required and must not be empty");
+            }
+            if (replace == null) {
+                replace = "";
+            }
+            int count = countOccurrences(current, find);
+            if (count > 0) {
+                current = current.replace(find, replace);
+                total += count;
+                continue;
+            }
+            if (isXml) {
+                String attrFind = escapeXmlAttr(find);
+                int attrCount = !attrFind.equals(find) ? countOccurrences(current, attrFind) : 0;
+                if (attrCount > 0) {
+                    String attrReplace = looksXmlEscaped(replace) ? replace : escapeXmlAttr(replace);
+                    current = current.replace(attrFind, attrReplace);
+                    total += attrCount;
+                    continue;
+                }
+                String htmlFind = escapeHtml(find);
+                int htmlCount = !htmlFind.equals(find) ? countOccurrences(current, htmlFind) : 0;
+                if (htmlCount > 0) {
+                    String htmlReplace = looksXmlEscaped(replace) ? replace : escapeHtml(replace);
+                    current = current.replace(htmlFind, htmlReplace);
+                    total += htmlCount;
+                    continue;
+                }
+            }
+            String preview = find.length() > 120 ? find.substring(0, 120) + "..." : find;
+            throw ApiException.badRequest("bad_request",
+                    "replacements[" + i + "].find was not found in report code: " + preview);
+        }
+        return new ReplacementResult(current, total);
+    }
+
+    private static String firstNonNullKey(Map<String, String> map, String... keys) {
+        for (String k : keys) {
+            for (Map.Entry<String, String> e : map.entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase(k) && e.getValue() != null) {
+                    return e.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static int countOccurrences(String text, String sub) {
+        if (text == null || sub == null || sub.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf(sub, idx)) >= 0) {
+            count++;
+            idx += sub.length();
+        }
+        return count;
+    }
+
+    private static boolean looksXmlEscaped(String s) {
+        return s != null && (s.contains("&quot;") || s.contains("&lt;") || s.contains("&gt;") || s.contains("&#10;"));
+    }
+
+    private static String escapeXmlAttr(String s) {
+        if (s == null) {
+            return "";
+        }
+        return escapeHtml(s).replace("\r\n", "&#10;").replace("\n", "&#10;");
+    }
+
+    private static String updateFrXmlRootName(String xml, String newName) {
+        if (blank(xml) || blank(newName)) {
+            return xml;
+        }
+        String escaped = java.util.regex.Matcher.quoteReplacement(escapeHtml(newName.trim()));
+        String updated = xml.replaceFirst("(<DESIGN\\b[^>]*\\bDESIGNNAME=\")([^\"]*)(\")", "$1" + escaped + "$3");
+        if (updated.equals(xml)) {
+            updated = xml.replaceFirst("(<BOOK\\b[^>]*\\bNAME=\")([^\"]*)(\")", "$1" + escaped + "$3");
+        }
+        return updated;
+    }
+
     private static String applyFrXmlSections(String xml, Map<String, Map<String, String>> updates) {
         if (updates == null || updates.isEmpty()) {
             return xml;
@@ -1224,6 +1413,13 @@ public final class ReportService {
         String result = xml;
         Map<String, String> general = findSectionIgnoreCase(updates, "General");
         if (general != null) {
+            String name = general.get("Name");
+            if (name == null) {
+                name = general.get("DESIGNNAME");
+            }
+            if (!blank(name)) {
+                result = updateFrXmlRootName(result, name);
+            }
             String desc = general.get("ReportDescription");
             if (desc == null) {
                 desc = general.get("REPORT_DESCRIPTION");
@@ -1248,7 +1444,162 @@ public final class ReportService {
                         "$1" + java.util.regex.Matcher.quoteReplacement(escapeHtml(e.getValue().trim())) + "$3");
             }
         }
+        Map<String, String> rows = findSectionIgnoreCase(updates, "Rows");
+        if (rows != null && !rows.isEmpty()) {
+            result = applyFrAxisUpdates(result, "Row", rows);
+        }
+        Map<String, String> cols = findSectionIgnoreCase(updates, "Columns");
+        if (cols != null && !cols.isEmpty()) {
+            result = applyFrAxisUpdates(result, "Column", cols);
+        }
         return result;
+    }
+
+    private static String applyFrAxisUpdates(String xml, String axisName, Map<String, String> axisUpdates) {
+        java.util.regex.Pattern axisPat = java.util.regex.Pattern.compile(
+                "(<GRIDAXIS\\b[^>]*\\bAXISNAME=\"" + java.util.regex.Pattern.quote(axisName) + "\"[^>]*>)(.*?)(</GRIDAXIS>)",
+                java.util.regex.Pattern.DOTALL | java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher axisMatcher = axisPat.matcher(xml);
+        if (!axisMatcher.find()) {
+            return xml;
+        }
+        String axisOpen = axisMatcher.group(1);
+        String axisBody = axisMatcher.group(2);
+        String axisClose = axisMatcher.group(3);
+
+        List<String> dimNames = new ArrayList<>();
+        java.util.regex.Matcher layerMatcher = java.util.regex.Pattern.compile(
+                "<GRIDLAYER\\b[^>]*\\bDIMENSIONNAME=\"([^\"]+)\"").matcher(axisBody);
+        while (layerMatcher.find()) {
+            dimNames.add(layerMatcher.group(1));
+        }
+
+        java.util.regex.Pattern segPat = java.util.regex.Pattern.compile(
+                "(<GRIDSEGMENT\\b[^>]*>)(.*?)(</GRIDSEGMENT>)",
+                java.util.regex.Pattern.DOTALL);
+        java.util.regex.Matcher segMatcher = segPat.matcher(axisBody);
+        StringBuffer newAxisBody = new StringBuffer();
+        int segIdx = 0;
+        while (segMatcher.find()) {
+            String segOpen = segMatcher.group(1);
+            String segInner = segMatcher.group(2);
+            String segClose = segMatcher.group(3);
+            int currentIdx = segIdx++;
+
+            String segId = null;
+            java.util.regex.Matcher idM = java.util.regex.Pattern.compile("\\bID=\"([^\"]+)\"").matcher(segOpen);
+            if (idM.find()) {
+                segId = idM.group(1);
+            }
+
+            for (Map.Entry<String, String> u : axisUpdates.entrySet()) {
+                if (blank(u.getKey()) || blank(u.getValue())) {
+                    continue;
+                }
+                if (matchesAxisSegment(u.getKey().trim(), axisName, currentIdx, segId)) {
+                    segInner = updateSegmentLayers(segInner, dimNames, u.getValue().trim());
+                }
+            }
+            segMatcher.appendReplacement(newAxisBody,
+                    java.util.regex.Matcher.quoteReplacement(segOpen + segInner + segClose));
+        }
+        segMatcher.appendTail(newAxisBody);
+
+        return xml.substring(0, axisMatcher.start())
+                + axisOpen + newAxisBody.toString() + axisClose
+                + xml.substring(axisMatcher.end());
+    }
+
+    private static boolean matchesAxisSegment(String key, String axisName, int zeroBasedIdx, String segId) {
+        String k = key.trim();
+        if (segId != null && (k.equalsIgnoreCase("ID=" + segId) || k.equalsIgnoreCase("Segment " + segId))) {
+            return true;
+        }
+        if ("Row".equalsIgnoreCase(axisName)) {
+            if (k.equalsIgnoreCase("Row " + (zeroBasedIdx + 1)) || k.equals(Integer.toString(zeroBasedIdx + 1))) {
+                return true;
+            }
+        } else if ("Column".equalsIgnoreCase(axisName)) {
+            if (k.equalsIgnoreCase("Col " + columnLabel(zeroBasedIdx))
+                    || k.equalsIgnoreCase("Column " + columnLabel(zeroBasedIdx))
+                    || k.equalsIgnoreCase(columnLabel(zeroBasedIdx))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String updateSegmentLayers(String segInner, List<String> dimNames, String spec) {
+        Map<Integer, String> updatesByLayer = new LinkedHashMap<>();
+        String[] parts = spec.contains(";") ? spec.split(";") : new String[] {spec};
+        for (String part : parts) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            int eq = p.indexOf('=');
+            if (eq > 0 && !p.toUpperCase(Locale.ROOT).startsWith("SELECT ") && !p.startsWith("<")) {
+                String dim = p.substring(0, eq).trim();
+                String expr = p.substring(eq + 1).trim();
+                int layerIdx = -1;
+                for (int i = 0; i < dimNames.size(); i++) {
+                    if (dimNames.get(i).equalsIgnoreCase(dim)) {
+                        layerIdx = i;
+                        break;
+                    }
+                }
+                if (layerIdx >= 0) {
+                    updatesByLayer.put(layerIdx, buildFrMemberSql(dimNames.get(layerIdx), expr));
+                }
+            } else if (!dimNames.isEmpty()) {
+                int defaultLayer = dimNames.size() - 1;
+                updatesByLayer.put(defaultLayer, buildFrMemberSql(dimNames.get(defaultLayer), p));
+            }
+        }
+        if (updatesByLayer.isEmpty()) {
+            return segInner;
+        }
+        java.util.regex.Pattern slPat = java.util.regex.Pattern.compile(
+                "(<SEGMENTLAYER\\b[^>]*>)(.*?)(</SEGMENTLAYER>)",
+                java.util.regex.Pattern.DOTALL);
+        java.util.regex.Matcher slMatcher = slPat.matcher(segInner);
+        StringBuffer sb = new StringBuffer();
+        int slIdx = 0;
+        while (slMatcher.find()) {
+            String slOpen = slMatcher.group(1);
+            String slBody = slMatcher.group(2);
+            String slClose = slMatcher.group(3);
+            int curLayer = slIdx++;
+            String newVal = updatesByLayer.get(curLayer);
+            if (newVal != null) {
+                String escapedVal = java.util.regex.Matcher.quoteReplacement(escapeXmlAttr(newVal));
+                slBody = slBody.replaceFirst("(<METADATAEXPRESSION\\b[^>]*\\bVALUE=\")([^\"]*)(\")",
+                        "$1" + escapedVal + "$3");
+            }
+            slMatcher.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(slOpen + slBody + slClose));
+        }
+        slMatcher.appendTail(sb);
+        return sb.toString();
+    }
+
+    private static String buildFrMemberSql(String dimName, String expr) {
+        String t = expr.trim();
+        if (t.toUpperCase(Locale.ROOT).startsWith("SELECT ") || t.startsWith("<?xml") || t.startsWith("<COMPOSITEOPERATION")) {
+            return t;
+        }
+        String[] rawMembers = t.split(",");
+        List<String> clauses = new ArrayList<>();
+        for (String rm : rawMembers) {
+            String m = rm.trim();
+            if (!m.isEmpty()) {
+                if (m.contains("(") && m.endsWith(")")) {
+                    clauses.add(m);
+                } else {
+                    clauses.add("Member(\"" + m + "\", \"" + dimName + "\")");
+                }
+            }
+        }
+        return "SELECT * FROM \"" + dimName + "\" WHERE " + String.join(" ,  ", clauses);
     }
 
     private static String[] splitFolderAndName(String folder, String rawName) {

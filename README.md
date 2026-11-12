@@ -1,15 +1,17 @@
 # HFM MCP
 
-MCP access to Oracle Hyperion Financial Management 11.2, through the HFM Java API: data,
-metadata and process-control status, plus optional, previewed process-control actions and
-consolidations. Users sign in with their own LDAP credentials, so HFM security applies to everything.
+MCP access to Oracle Hyperion Financial Management 11.2, through the HFM Java API and EPM
+repository: data, metadata, process-control status, journals, Financial Reporting (FR) books &
+reports and HFM Document Manager reports, plus optional, previewed process-control actions,
+consolidations, extracts, data copies, native data loads, journal workflows and report updates.
+Users sign in with their own LDAP credentials, so HFM security applies to everything.
 
 ```
  Antigravity / any MCP client          (user's machine)
         │ MCP over stdio
         ▼
  hfm-mcp  (Python, mcp/)               (user's machine)
-   - 4 read-only tools
+   - 11 read-only tools + 9 optional preview/execute action tools
    - password kept in the OS keychain
         │ HTTPS + X-Api-Key + X-Session-Id
         ▼
@@ -17,9 +19,9 @@ consolidations. Users sign in with their own LDAP credentials, so HFM security a
    - logs in through Shared Services (CSS → LDAP); keeps the SSO token, never the password
    - one HFM session per user, re-opened automatically on timeout
    - per-user metadata cache, cell/member limits, login throttling
-        │ HFM Java API (Thrift)
+        │ HFM Java API (Thrift) + EPM Repository JDBC (RegistryUtils)
         ▼
- HFM cluster
+ HFM cluster & EPM Financial Reporting repository
 ```
 
 Why two processes? EPM 11.2 runs on JDK 8, and the HFM API relies on JAXB and Oracle's
@@ -54,7 +56,7 @@ With actions enabled (see below), more:
 | `hfm_get_task_status` | Progress of a consolidation or extract that was still running when `hfm_execute_action` returned. |
 | `hfm_preview_journal_save` | Prepare creating or replacing a WORKING journal. HFM scans it first; scan errors leave nothing to confirm. |
 | `hfm_preview_journal_action` | Prepare SUBMIT / UNSUBMIT / APPROVE / REJECT / POST / UNPOST / DELETE on journals, with each journal's current status. |
-| `hfm_preview_report_save` | Prepare creating or updating a report's definition code/script and metadata (`DocumentOM.saveDocumentContent`). |
+| `hfm_preview_report_save` | Prepare creating, copying (`copy_from`) or updating a Financial Reporting object in the EPM repository or an HFM Document Manager report (`replacements`, `sections` or `code`). |
 
 Only `COPY_DATA` and `LOAD_DATA` write cell data, and both are off unless added to `actions.allowed`.
 
@@ -66,8 +68,18 @@ journal changes reported numbers, and a delete is permanent. Journals are not ed
 of a WORKING or REJECTED journal with the same label. Journal templates are not supported.
 
 Listing reports, reading report metadata/code, and viewing rendered reports (`hfm_list_reports`, `hfm_get_report`,
-`hfm_view_report`) need no actions. Creating or updating a report definition (`hfm_preview_report_save` →
-`hfm_execute_action`) requires `REPORT_SAVE` in `actions.allowed` (off by default).
+`hfm_view_report`) need no actions:
+- **Financial Reporting (`TENANT_ID = 'fr'`)**: reads reports (`FR_REPORT`), books (`FR_BOOK`), snapshot reports/books
+  (`FR_SNAPSHOT_REPORT`, `FR_SNAPSHOT_BOOK`), batches (`FR_BATCH`), saved grids/row-columns/text (`FR_GRID`,
+  `FR_ROW_COLUMN`, `FR_TEXT`) and folders (`FOLDER`) across the EPM Workspace repository, decompressing zipped `jcr:data`
+  definitions (`des`, `rog`, `ros`, `rot`, `rpt`) and parsing XML definitions (`kbk`, `kbt`, `bch`) into structured
+  `sections` (grid `Rows`, `Columns`, formulas, `PointOfView`, `Header`, and book `Chapters`).
+- **HFM Document Manager (`DocumentOM`)**: reads and executes HFM reports (`JOURNAL`, `INTERCOMPANY`,
+  `IC_MATCHING_TEMPLATE`, `IC_TRANSACTION`, `IC_MONITOR`, `IC_MATCH_BY_ACCOUNT`, `IC_MATCH_BY_TRANS_ID`,
+  `DATA_EXPLORER`, `HYP`) via `DocumentOM` and `SystemReportsHelper`.
+Creating, copying (`copy_from`) or updating a report definition (`hfm_preview_report_save` → `hfm_execute_action`,
+with `replacements`, `sections` including `Rows`/`Columns`/`PointOfView`, or full `code`) requires `REPORT_SAVE` in
+`actions.allowed` (off by default).
 
 ## Actions (process control and consolidation)
 
@@ -129,11 +141,8 @@ a freshly refreshed star schema.
 On the EPM server (any HFM web or app server), open an **elevated** Windows PowerShell and run:
 
 ```powershell
-# The repository is private: use a GitHub token that can read it (fine-grained, Contents: read-only)
-$env:HFM_MCP_GITHUB_TOKEN = '<token>'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12   # GitHub needs TLS 1.2
-irm 'https://api.github.com/repos/kool2zero/hfm-mcp/contents/install.ps1' -Headers @{
-    Authorization = "Bearer $env:HFM_MCP_GITHUB_TOKEN"; Accept = 'application/vnd.github.raw' } | iex
+irm https://github.com/kool2zero/hfm-mcp/releases/latest/download/install.ps1 | iex
 ```
 
 The installer walks through every step and explains each one:
@@ -155,7 +164,7 @@ parameters when running the script file:
 
 | Variable | Parameter | Purpose |
 |---|---|---|
-| `HFM_MCP_VERSION` | `-Version v0.2.0` | Install a specific release instead of the latest. |
+| `HFM_MCP_VERSION` | `-Version v0.5.2` | Install a specific release instead of the latest. |
 | `HFM_MCP_INSTALL_DIR` | `-InstallDir` | Install folder. Default: the existing service's folder on an upgrade. |
 | `HFM_MCP_PACKAGE` | `-Package <zip>` | Offline: install a downloaded release zip; no GitHub access needed. |
 | `HFM_MCP_APPLICATION` | `-Application` | HFM application name. |
@@ -164,9 +173,6 @@ parameters when running the script file:
 
 **Offline servers:** copy `install.ps1` and `hfm-mcp-server-<version>.zip` from a release, then
 run `.\install.ps1 -Package .\hfm-mcp-server-<version>.zip`.
-
-If the repository is ever made public, the token is no longer needed:
-`irm https://github.com/kool2zero/hfm-mcp/releases/latest/download/install.ps1 | iex`.
 
 #### Prebuilt Oracle backend
 
@@ -182,7 +188,7 @@ step:
 
 #### Publishing a release
 
-Push a tag: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow:
+Push a tag: `git tag v0.5.2 && git push origin v0.5.2`. The Release workflow:
 - runs the tests
 - builds `hfm-mcp-server-<version>.zip` (daemon jar, prebuilt Oracle backend, scripts, config
   template)
@@ -250,7 +256,8 @@ Push a tag: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow:
 
 The Oracle backend follows the published 11.2 Javadoc (*Java API Reference for Oracle Hyperion
 Financial Management*) and has been run against HFM 11.2.21: login, cells, members and custom
-dimensions, process status and actions, consolidation, copy, load and flat-file extract.
+dimensions, process status and actions, consolidation, copy, load, flat-file extract, journals,
+HFM Document Manager reports and the EPM Financial Reporting repository.
 - cells are read with `DataOM.getCellsDataAndStatus`, using `rawData`, `cellStatus` and `errorDetail`
 - dimensions come from `MetadataOM.getDimensions(ALL)` and are matched to POV prefixes by `shortName`
 - hierarchies come from `MetadataOM.getMembers` (`[Hierarchy]`, `RecordSetRange` 0..-1); HFM
@@ -259,6 +266,15 @@ dimensions, process status and actions, consolidation, copy, load and flat-file 
   HFM ignores the member in a list such as `{Group.[Children]}`
 - an Extended Analytics extract needs every dimension in its slice; the preview fills omitted
   ones from the default POV and shows the complete slice
+- journals use `JournalOM` (`getCurrentJournalFilter`, `enumJournals`, `getJournalByName`,
+  `performScan`, `saveJournal`, `performJournalAction`)
+- HFM Document Manager and system reports use `DocumentOM` (`enumDocuments`, `getDocumentInfo`,
+  `getDocumentContent`, `saveDocumentContent`), `SystemReportsHelper` (`generateReport`,
+  `startReport`) and `AdministrationOM.getRunningTaskFile`
+- Financial Reporting objects (`FR_REPORT`, `FR_BOOK`, `FR_BATCH`, …) are read from and updated in
+  the EPM repository via `RegistryUtils.createNewConnection()` (`REPOSITORY_OBJECTS` and
+  `REPOSITORY_OBJECT_PROPERTIES` where `TENANT_ID = 'fr'`), unpacking PK-zipped `jcr:data` streams
+  (`des`, `rog`, `ros`, `rot`, `rpt`) and reading raw XML definitions (`kbk`, `kbt`, `bch`)
 - errors are classified by `ErrorCodeConsts` and `HResultConsts`
 
 `debug.includeRaw=true` adds every raw HFM field to responses, if something looks off.
@@ -270,10 +286,8 @@ dimensions, process status and actions, consolidation, copy, load and flat-file 
 No Python and no administrator rights needed. In a normal (not elevated) PowerShell window:
 
 ```powershell
-$env:HFM_MCP_GITHUB_TOKEN = '<token>'   # while the repository is private
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12   # GitHub needs TLS 1.2
-irm 'https://api.github.com/repos/kool2zero/hfm-mcp/contents/install-client.ps1' -Headers @{
-    Authorization = "Bearer $env:HFM_MCP_GITHUB_TOKEN"; Accept = 'application/vnd.github.raw' } | iex
+irm https://github.com/kool2zero/hfm-mcp/releases/latest/download/install-client.ps1 | iex
 ```
 
 The installer:
@@ -389,12 +403,20 @@ All `/api/v1/*` calls need `X-Api-Key`. All except login also need `X-Session-Id
 | POST | `/api/v1/actions/preview-load` | `{file, mode?, delimiter?, scanOnly?, accumulateWithinFile?, containsOwnershipData?}` |
 | POST | `/api/v1/actions/execute` | `{planId}` |
 | POST | `/api/v1/tasks/status` | `{taskIds}` |
+| POST | `/api/v1/journals/list` | `{pov?, statuses?, types?, label?, group?, entity?, description?}` |
+| POST | `/api/v1/journals/get` | `{pov?, label}` |
+| POST | `/api/v1/journals/preview-save` | `{pov?, label, group?, description?, balanceType?, type?, securityClass?, lines}` |
+| POST | `/api/v1/journals/preview-action` | `{pov?, action, labels}` |
+| POST | `/api/v1/reports/list` | `{reportTypes?, folder?, query?, includePrivate?}` |
+| POST | `/api/v1/reports/get` | `{name, reportType?, folder?}` |
+| POST | `/api/v1/reports/view` | `{name, reportType?, folder?, format?, pov?, slice?, entity?, partner?, stylesheet?}` |
+| POST | `/api/v1/reports/preview-save` | `{name, reportType?, folder?, copyFrom?, replacements?, code?, sections?, description?, securityClass?, private?, fileType?}` |
 | GET | `/health` | no auth |
 
 Errors are returned as `{"error": {"code", "message"}}`. The codes include `auth_failed`,
-`session_expired`, `too_many_attempts`, `unknown_dimension`, `hfm_rejected`,
-`too_many_cells`, `hfm_error`, `actions_disabled`, `action_not_allowed`, `plan_not_found` and
-`too_many_units`.
+`session_expired`, `too_many_attempts`, `unknown_dimension`, `bad_request`, `bad_pov`, `bad_line`,
+`journal_locked`, `no_such_journal`, `hfm_rejected`, `too_many_cells`, `hfm_error`,
+`actions_disabled`, `action_not_allowed`, `plan_not_found` and `too_many_units`.
 
 ## License
 

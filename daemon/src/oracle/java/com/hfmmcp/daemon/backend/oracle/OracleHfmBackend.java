@@ -1462,7 +1462,7 @@ public final class OracleHfmBackend implements HfmBackend {
         ReportInfo ri = report.info;
         String upperType = ri.reportType == null ? "" : ri.reportType.trim().toUpperCase(Locale.ROOT);
         if (REPORT_TYPE_TO_FR_REPO.containsKey(upperType)) {
-            saveFrReport(ri, report.code == null ? "" : report.code, report.encoding, overwrite);
+            saveFrReport(report, overwrite);
             return;
         }
         DOCUMENTTYPES dt = toDocType(ri.reportType);
@@ -1728,30 +1728,48 @@ public final class OracleHfmBackend implements HfmBackend {
         throw new BackendException(Kind.HFM_ERROR, "Failed to read Financial Reporting object '" + node.name + "'");
     }
 
-    private void saveFrReport(ReportInfo ri, String code, String encoding, boolean overwrite) throws BackendException {
+    private void saveFrReport(ReportDetail report, boolean overwrite) throws BackendException {
+        ReportInfo ri = report.info;
+        String code = report.code == null ? "" : report.code;
+        String encoding = report.encoding;
         String normFolder = normalizeDocPath(ri.folder);
         FrRepoNode existing = findFrReportNode(normFolder, ri.name, ri.reportType);
-        if (existing == null) {
-            throw new BackendException(Kind.BAD_REQUEST,
-                    "Financial Reporting object '" + ri.name + "' (" + ri.reportType + ") does not exist in "
-                            + displayFolder(normFolder)
-                            + "; new Financial Reporting objects must be created from an existing template in Workspace");
-        }
-        if (!overwrite) {
+        if (existing != null && !overwrite) {
             throw new BackendException(Kind.BAD_REQUEST,
                     "Report '" + ri.name + "' (" + ri.reportType + ") already exists in " + existing.folderPath);
         }
+
+        FrRepoNode sourceNode = null;
+        boolean explicitCopy = false;
+        if (report.copyFrom != null && notBlank(report.copyFrom.name)) {
+            sourceNode = findFrReportNode(normalizeDocPath(report.copyFrom.folder),
+                    report.copyFrom.name, report.copyFrom.reportType);
+            explicitCopy = sourceNode != null;
+        }
+        if (sourceNode == null && existing == null) {
+            sourceNode = findDonorFrNode(normFolder, ri.reportType);
+        }
+
+        String repoType = existing != null
+                ? existing.repoType
+                : REPORT_TYPE_TO_FR_REPO.getOrDefault(
+                        ri.reportType == null ? "FR_REPORT" : ri.reportType.toUpperCase(Locale.ROOT), "des");
+        String parentFolderUuid = existing != null
+                ? existing.parentUuid
+                : findFrParentFolderUuid(normFolder, sourceNode);
+
         boolean zipCompressed = (encoding != null && encoding.toUpperCase(Locale.ROOT).startsWith("ZIP:"))
-                || "des".equalsIgnoreCase(existing.repoType)
-                || "rog".equalsIgnoreCase(existing.repoType)
-                || "ros".equalsIgnoreCase(existing.repoType)
-                || "rot".equalsIgnoreCase(existing.repoType)
-                || "rpt".equalsIgnoreCase(existing.repoType);
+                || "des".equalsIgnoreCase(repoType)
+                || "rog".equalsIgnoreCase(repoType)
+                || "ros".equalsIgnoreCase(repoType)
+                || "rot".equalsIgnoreCase(repoType)
+                || "rpt".equalsIgnoreCase(repoType);
         byte[] payload = encodeFrBytes(code, encoding, zipCompressed);
         long now = ri.lastModified > 0 ? ri.lastModified : System.currentTimeMillis();
         byte[] nowLongBytes = java.nio.ByteBuffer.allocate(8).putLong(now).array();
         byte[] sizeLongBytes = java.nio.ByteBuffer.allocate(8).putLong(payload.length).array();
         byte[] sizeStrBytes = Long.toString(payload.length).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] nameBytes = ri.name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
         for (int attempt = 1; attempt <= 2; attempt++) {
             try {
@@ -1759,31 +1777,120 @@ public final class OracleHfmBackend implements HfmBackend {
                 boolean origAutoCommit = conn.getAutoCommit();
                 conn.setAutoCommit(false);
                 try {
-                    int maxVer = 1;
-                    try (java.sql.PreparedStatement ps = conn.prepareStatement(
-                            "SELECT MAX(VERSION_NUMBER) FROM REPOSITORY_OBJECT_PROPERTIES WHERE OBJECT_UUID = ?")) {
-                        ps.setString(1, existing.uuid);
-                        try (java.sql.ResultSet rs = ps.executeQuery()) {
-                            if (rs.next() && rs.getInt(1) > 0) {
-                                maxVer = rs.getInt(1);
+                    String targetUuid;
+                    int targetVer = 1;
+                    if (existing != null) {
+                        targetUuid = existing.uuid;
+                        try (java.sql.PreparedStatement ps = conn.prepareStatement(
+                                "SELECT MAX(VERSION_NUMBER) FROM REPOSITORY_OBJECT_PROPERTIES WHERE OBJECT_UUID = ?")) {
+                            ps.setString(1, targetUuid);
+                            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                                if (rs.next() && rs.getInt(1) > 0) {
+                                    targetVer = rs.getInt(1);
+                                }
+                            }
+                        }
+                        try (java.sql.PreparedStatement delProp = conn.prepareStatement(
+                                "DELETE FROM REPOSITORY_OBJECT_PROPERTIES WHERE OBJECT_UUID = ? AND PROPERTY_NAME LIKE '%DataQuery%'");
+                             java.sql.PreparedStatement delIdx = conn.prepareStatement(
+                                "DELETE FROM REPOSITORY_OBJECT_PROP_INDEX WHERE OBJECT_UUID = ? AND KEYWORD LIKE '%DataQuery%'")) {
+                            delProp.setString(1, targetUuid);
+                            delProp.executeUpdate();
+                            delIdx.setString(1, targetUuid);
+                            delIdx.executeUpdate();
+                        }
+                    } else {
+                        targetUuid = java.util.UUID.randomUUID().toString();
+                        java.sql.Timestamp nowTs = new java.sql.Timestamp(now);
+                        String author = notBlank(ri.owner) ? ri.owner.trim()
+                                : (sourceNode != null && notBlank(sourceNode.author) ? sourceNode.author : "admin");
+                        try (java.sql.PreparedStatement insObj = conn.prepareStatement(
+                                "INSERT INTO REPOSITORY_OBJECTS "
+                                        + "(TENANT_ID, OBJECT_UUID, TYPE, PARENT_FOLDER_UUID, CREATION_DATE, AUTHOR, "
+                                        + "INTERNAL, HIDDEN, READ_ONLY, VERSIONED, CHECKEDOUT, CHECKEDOUT_BY, LAST_ACCESSED, USAGE_COUNT) "
+                                        + "VALUES ('fr', ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, NULL, ?, 0)")) {
+                            insObj.setString(1, targetUuid);
+                            insObj.setString(2, repoType);
+                            insObj.setString(3, parentFolderUuid);
+                            insObj.setTimestamp(4, nowTs);
+                            insObj.setString(5, author);
+                            insObj.setTimestamp(6, nowTs);
+                            insObj.executeUpdate();
+                        }
+                        if (sourceNode != null) {
+                            int srcVer = 1;
+                            try (java.sql.PreparedStatement ps = conn.prepareStatement(
+                                    "SELECT MAX(VERSION_NUMBER) FROM REPOSITORY_OBJECT_PROPERTIES WHERE OBJECT_UUID = ?")) {
+                                ps.setString(1, sourceNode.uuid);
+                                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                                    if (rs.next() && rs.getInt(1) > 0) {
+                                        srcVer = rs.getInt(1);
+                                    }
+                                }
+                            }
+                            String propFilter = explicitCopy
+                                    ? "AND PROPERTY_NAME NOT LIKE 'USER_RECENT%' AND PROPERTY_NAME NOT LIKE 'USER_FAVORITE%' AND PROPERTY_NAME NOT LIKE '%DataQuery%'"
+                                    : "AND (PROPERTY_NAME IN ('DataSourceIDs', '{http://www.jcp.org/jcr/1.0}autokeyword', 'AUTO_DELETE', 'PromptSet90') OR PROPERTY_NAME LIKE 'USER_PERMISSION%')";
+                            try (java.sql.PreparedStatement copyProps = conn.prepareStatement(
+                                    "INSERT INTO REPOSITORY_OBJECT_PROPERTIES "
+                                            + "(OBJECT_UUID, PROPERTY_NAME, PROPERTY_VALUE, VERSION_NUMBER, VERSION_COPIED) "
+                                            + "SELECT ?, PROPERTY_NAME, PROPERTY_VALUE, 1, 0 "
+                                            + "FROM REPOSITORY_OBJECT_PROPERTIES "
+                                            + "WHERE OBJECT_UUID = ? AND VERSION_NUMBER = ? " + propFilter)) {
+                                copyProps.setString(1, targetUuid);
+                                copyProps.setString(2, sourceNode.uuid);
+                                copyProps.setInt(3, srcVer);
+                                copyProps.executeUpdate();
+                            }
+                            try (java.sql.PreparedStatement copyAcls = conn.prepareStatement(
+                                    "INSERT INTO REPOSITORY_OBJECT_ACLS (OBJECT_UUID, SUBJECT_ID, SUBJECT_TYPE, ACL_TYPE) "
+                                            + "SELECT ?, SUBJECT_ID, SUBJECT_TYPE, ACL_TYPE "
+                                            + "FROM REPOSITORY_OBJECT_ACLS WHERE OBJECT_UUID = ?")) {
+                                copyAcls.setString(1, targetUuid);
+                                copyAcls.setString(2, sourceNode.uuid);
+                                copyAcls.executeUpdate();
+                            }
+                            String idxFilter = explicitCopy
+                                    ? "AND KEYWORD NOT LIKE 'USER_RECENT%' AND KEYWORD NOT LIKE 'USER_FAVORITE%' AND KEYWORD NOT LIKE '%DataQuery%'"
+                                    : "AND (KEYWORD IN ('DataSourceIDs', '{http://www.jcp.org/jcr/1.0}autokeyword', 'AUTO_DELETE', 'PromptSet90') OR KEYWORD LIKE 'USER_PERMISSION%')";
+                            try (java.sql.PreparedStatement copyIdx = conn.prepareStatement(
+                                    "INSERT INTO REPOSITORY_OBJECT_PROP_INDEX "
+                                            + "(KEYWORD, TYPE, LONG_VALUE, DATE_VALUE, STRING_VALUE, VERSION_NUMBER, OBJECT_UUID) "
+                                            + "SELECT KEYWORD, TYPE, LONG_VALUE, DATE_VALUE, STRING_VALUE, 1, ? "
+                                            + "FROM REPOSITORY_OBJECT_PROP_INDEX "
+                                            + "WHERE OBJECT_UUID = ? AND VERSION_NUMBER = ? " + idxFilter)) {
+                                copyIdx.setString(1, targetUuid);
+                                copyIdx.setString(2, sourceNode.uuid);
+                                copyIdx.setInt(3, srcVer);
+                                copyIdx.executeUpdate();
                             }
                         }
                     }
-                    upsertFrProperty(conn, existing.uuid, maxVer, "jcr:data", payload);
-                    upsertFrProperty(conn, existing.uuid, maxVer, "jcr:fileSize", sizeLongBytes);
-                    upsertFrProperty(conn, existing.uuid, maxVer, "fileSize", sizeStrBytes);
-                    upsertFrProperty(conn, existing.uuid, maxVer, "jcr:lastModified", nowLongBytes);
-                    upsertFrProperty(conn, existing.uuid, maxVer, "lastModified",
-                            Long.toString(now).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    if (ri.description != null) {
-                        upsertFrProperty(conn, existing.uuid, maxVer, "DESCRIPTION",
-                                ri.description.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    }
+
+                    upsertFrProperty(conn, targetUuid, targetVer, "NAME", nameBytes);
+                    upsertFrProperty(conn, targetUuid, targetVer, "jcr:originalFileName", nameBytes);
+                    upsertFrProperty(conn, targetUuid, targetVer, "jcr:data", payload);
+                    upsertFrProperty(conn, targetUuid, targetVer, "jcr:fileSize", sizeLongBytes);
+                    upsertFrProperty(conn, targetUuid, targetVer, "fileSize", sizeStrBytes);
+                    upsertFrProperty(conn, targetUuid, targetVer, "jcr:lastModified", nowLongBytes);
+                    upsertFrProperty(conn, targetUuid, targetVer, "lastModified",
+                            new java.util.Date(now).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    String desc = ri.description == null ? "" : ri.description;
+                    upsertFrProperty(conn, targetUuid, targetVer, "DESCRIPTION",
+                            desc.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     if (notBlank(ri.owner)) {
                         byte[] ownerBytes = ri.owner.trim().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                        upsertFrProperty(conn, existing.uuid, maxVer, "lastModifiedBy", ownerBytes);
-                        upsertFrProperty(conn, existing.uuid, maxVer, "{http://www.jcp.org/jcr/1.0}lastModifiedBy", ownerBytes);
+                        upsertFrProperty(conn, targetUuid, targetVer, "lastModifiedBy", ownerBytes);
+                        upsertFrProperty(conn, targetUuid, targetVer, "{http://www.jcp.org/jcr/1.0}lastModifiedBy", ownerBytes);
                     }
+
+                    upsertFrPropIndex(conn, targetUuid, targetVer, "NAME", "java.lang.String", -1L, ri.name);
+                    upsertFrPropIndex(conn, targetUuid, targetVer, "jcr:originalFileName", "java.lang.String", -1L, ri.name);
+                    upsertFrPropIndex(conn, targetUuid, targetVer, "DESCRIPTION", "java.lang.String", -1L, desc);
+                    upsertFrPropIndex(conn, targetUuid, targetVer, "jcr:data", "byte", -1L, null);
+                    upsertFrPropIndex(conn, targetUuid, targetVer, "jcr:fileSize", "java.lang.Long", payload.length, null);
+                    upsertFrPropIndex(conn, targetUuid, targetVer, "jcr:lastModified", "java.lang.Long", now, null);
+
                     conn.commit();
                     synchronized (frCacheLock) {
                         frCachedNodes = null;
@@ -1802,6 +1909,88 @@ public final class OracleHfmBackend implements HfmBackend {
                             "Failed to save Financial Reporting object '" + ri.name + "': " + e.getMessage(), e);
                 }
             }
+        }
+    }
+
+    private FrRepoNode findDonorFrNode(String normFolder, String reportType) {
+        List<FrRepoNode> nodes = loadFrRepositoryNodes(false);
+        FrRepoNode anyMatch = null;
+        for (FrRepoNode node : nodes) {
+            if ("FOLDER".equals(node.reportType) || node.internal || node.hidden) {
+                continue;
+            }
+            if (reportType != null && !reportType.equalsIgnoreCase(node.reportType)) {
+                continue;
+            }
+            if (node.folderPath.equalsIgnoreCase(normFolder)) {
+                return node;
+            }
+            if (anyMatch == null) {
+                anyMatch = node;
+            }
+        }
+        return anyMatch;
+    }
+
+    private String findFrParentFolderUuid(String normFolder, FrRepoNode sourceNode) throws BackendException {
+        if (!notBlank(normFolder) || "Root".equalsIgnoreCase(normFolder)) {
+            return "ROOTfr";
+        }
+        if (sourceNode != null && normFolder.equalsIgnoreCase(sourceNode.folderPath) && notBlank(sourceNode.parentUuid)) {
+            return sourceNode.parentUuid;
+        }
+        List<FrRepoNode> nodes = loadFrRepositoryNodes(false);
+        for (FrRepoNode node : nodes) {
+            if ("FOLDER".equals(node.reportType)) {
+                String fullPath = "Root".equalsIgnoreCase(node.folderPath)
+                        ? node.name
+                        : (node.folderPath + "/" + node.name);
+                if (normFolder.equalsIgnoreCase(fullPath)) {
+                    return node.uuid;
+                }
+            } else if (normFolder.equalsIgnoreCase(node.folderPath) && notBlank(node.parentUuid)) {
+                return node.parentUuid;
+            }
+        }
+        throw new BackendException(Kind.BAD_REQUEST,
+                "Financial Reporting folder '" + displayFolder(normFolder) + "' does not exist");
+    }
+
+    private static void upsertFrPropIndex(java.sql.Connection conn, String uuid, int version,
+                                          String keyword, String type, long longVal, String strVal)
+            throws java.sql.SQLException {
+        try (java.sql.PreparedStatement upd = conn.prepareStatement(
+                "UPDATE REPOSITORY_OBJECT_PROP_INDEX SET TYPE = ?, LONG_VALUE = ?, STRING_VALUE = ? "
+                        + "WHERE OBJECT_UUID = ? AND KEYWORD = ? AND VERSION_NUMBER = ?")) {
+            upd.setString(1, type);
+            upd.setLong(2, longVal);
+            if (strVal != null) {
+                upd.setString(3, strVal);
+            } else {
+                upd.setNull(3, java.sql.Types.NVARCHAR);
+            }
+            upd.setString(4, uuid);
+            upd.setString(5, keyword);
+            upd.setInt(6, version);
+            if (upd.executeUpdate() > 0) {
+                return;
+            }
+        }
+        try (java.sql.PreparedStatement ins = conn.prepareStatement(
+                "INSERT INTO REPOSITORY_OBJECT_PROP_INDEX "
+                        + "(KEYWORD, TYPE, LONG_VALUE, DATE_VALUE, STRING_VALUE, VERSION_NUMBER, OBJECT_UUID) "
+                        + "VALUES (?, ?, ?, NULL, ?, ?, ?)")) {
+            ins.setString(1, keyword);
+            ins.setString(2, type);
+            ins.setLong(3, longVal);
+            if (strVal != null) {
+                ins.setString(4, strVal);
+            } else {
+                ins.setNull(4, java.sql.Types.NVARCHAR);
+            }
+            ins.setInt(5, version);
+            ins.setString(6, uuid);
+            ins.executeUpdate();
         }
     }
 

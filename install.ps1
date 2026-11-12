@@ -22,13 +22,7 @@ Re-run it to upgrade: files are replaced, the configuration is kept unless you c
 Run from an elevated Windows PowerShell on the EPM server. Options may be given as parameters,
 or as HFM_MCP_* environment variables when piping into Invoke-Expression:
 
-  # Private repository (token needs read access to the repository's contents):
-  $env:HFM_MCP_GITHUB_TOKEN = '<token>'
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-  irm 'https://api.github.com/repos/kool2zero/hfm-mcp/contents/install.ps1' -Headers @{
-      Authorization = "Bearer $env:HFM_MCP_GITHUB_TOKEN"; Accept = 'application/vnd.github.raw' } | iex
-
-  # Public repository:
   irm https://github.com/kool2zero/hfm-mcp/releases/latest/download/install.ps1 | iex
 
   # Offline (copy install.ps1 and the zip from a release to the server):
@@ -38,7 +32,7 @@ or as HFM_MCP_* environment variables when piping into Invoke-Expression:
 Where to install. Default: the folder of the existing hfm-daemon service, else <EPM drive>:\hfm-mcp.
 Env: HFM_MCP_INSTALL_DIR
 .PARAMETER Version
-Release to install, e.g. v0.2.0. Default: the latest.  Env: HFM_MCP_VERSION
+Release to install, e.g. v0.5.2. Default: the latest.  Env: HFM_MCP_VERSION
 .PARAMETER Package
 Local server package zip instead of downloading.  Env: HFM_MCP_PACKAGE
 .PARAMETER GitHubToken

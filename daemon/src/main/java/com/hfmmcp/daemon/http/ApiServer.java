@@ -47,12 +47,14 @@ import javax.net.ssl.SSLContext;
  */
 public final class ApiServer {
     private static final Logger LOG = Logger.getLogger(ApiServer.class.getName());
-    private static final int MAX_BODY_BYTES = 1 << 20;
+    private static final int MAX_BODY_BYTES = 4 << 20;
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<Map<String, String>>() { };
     private static final TypeReference<LinkedHashMap<String, List<String>>> VARY_MAP =
             new TypeReference<LinkedHashMap<String, List<String>>>() { };
     private static final TypeReference<LinkedHashMap<String, Map<String, String>>> SECTIONS_MAP =
             new TypeReference<LinkedHashMap<String, Map<String, String>>>() { };
+    private static final TypeReference<List<Map<String, String>>> REPLACEMENTS_LIST =
+            new TypeReference<List<Map<String, String>>>() { };
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<List<String>>() { };
     private static final TypeReference<List<Integer>> INT_LIST = new TypeReference<List<Integer>>() { };
 
@@ -282,10 +284,16 @@ public final class ApiServer {
                 JsonNode b = readBody(ex);
                 Map<String, Map<String, String>> sections = b.hasNonNull("sections")
                         ? convert(b.get("sections"), SECTIONS_MAP, "sections") : null;
+                List<Map<String, String>> replacements = b.hasNonNull("replacements")
+                        ? convert(b.get("replacements"), REPLACEMENTS_LIST, "replacements") : null;
                 Boolean isPrivate = b.hasNonNull("private") ? b.get("private").asBoolean() : null;
+                String copyFrom = text(b, "copyFrom");
+                if (copyFrom == null) {
+                    copyFrom = text(b, "copy_from");
+                }
                 return actions.reports().previewSave(s, text(b, "name"), text(b, "reportType"), text(b, "folder"),
                         text(b, "code"), sections, text(b, "description"), text(b, "securityClass"), isPrivate,
-                        text(b, "fileType"));
+                        text(b, "fileType"), copyFrom, replacements);
             }
             case "POST /api/v1/actions/execute":
                 return actions.execute(s, text(readBody(ex), "planId"));
