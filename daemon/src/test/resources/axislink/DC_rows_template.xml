@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<SEGMENTSET DATASOURCE_ID="-6e9e5626_128b90ec6b2_-76e3" DESCRIPTION="" NAME="/Users/test" SAVED_PROPS="0000" SAVE_AXIS="2" VERSION="2.5">
+<SEGMENT_PROP HIDE_ALWAYS="1" SEGMENT="0"/>
+<SEGMENT_PROP SEGMENT="1"/>
+<SEGMENT_PROP SEGMENT="2"/>
+<SEGMENT_PROP SEGMENT="3"/>
+<SEGMENT_PROP SEGMENT="4"/>
+<SEGMENT_PROP SEGMENT="5"/>
+<SEGMENT_PROP SEGMENT="6"/>
+<SEGMENT_PROP SEGMENT="7"/>
+<SEGMENT_PROP SEGMENT="8"/>
+<SEGMENT_PROP SEGMENT="9"/>
+<SEGMENT_PROP SEGMENT="10"/>
+<SEGMENT_PROP SEGMENT="11"/>
+<SEGMENT_PROP SEGMENT="12"/>
+<SEGMENT_PROP SEGMENT="13"/>
+<SEGMENT_PROP SEGMENT="14"/>
+<SEGMENT_PROP SEGMENT="15"/>
+<SEGMENT_PROP SEGMENT="16"/>
+<SEGMENT_PROP SEGMENT="17"/>
+<SEGMENT_PROP SEGMENT="18"/>
+<SEGMENT_PROP SEGMENT="19"/>
+<SEGMENT_PROP SEGMENT="20"/>
+<SEGMENT_PROP SEGMENT="21"/>
+<SEGMENT_PROP SEGMENT="22"/>
+<SEGMENT_PROP SEGMENT="23"/>
+<SEGMENT_PROP SEGMENT="24"/>
+<SEGMENT_PROP SEGMENT="25"/>
+<SEGMENT_PROP SEGMENT="26"/>
+<CELL_STYLE FONT_COLOR="8453888" FONT_NAME="Arial" FONT_SIZE="10" INDEX="0"/>
+<CELL_STYLE FONT_COLOR="8453888" FONT_NAME="Arial" FONT_SIZE="10" HALIGN="2" INDEX="1" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE FONT_NAME="Arial" FONT_SIZE="10" INDEX="2"/>
+<CELL_STYLE FONT_NAME="Arial" FONT_SIZE="10" HALIGN="2" INDEX="3" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE FONT_BOLD="1" FONT_COLOR="8453888" FONT_NAME="Arial" FONT_SIZE="10" INDEX="4" NUM_NEG_PREFIX="&lt;empty&gt;"/>
+<CELL_STYLE FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="10" INDEX="5" NUM_NEG_PREFIX="&lt;empty&gt;"/>
+<CELL_STYLE FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="10" HALIGN="2" INDEX="6" NUM_NEG_PREFIX="&lt;empty&gt;" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE FONT_BOLD="1" FONT_COLOR="8453888" FONT_NAME="Arial" FONT_SIZE="10" INDEX="7"/>
+<CELL_STYLE FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="10" INDEX="8"/>
+<CELL_STYLE FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="10" HALIGN="2" INDEX="9" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE BORDER_TOP="1" FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="10" HALIGN="2" INDEX="10" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE FONT_NAME="Arial" FONT_SIZE="10" HALIGN="2" INDEX="11" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<STYLE_IDX COL_IDX="0,0,1" ROW="0"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="1"/>
+<STYLE_IDX COL_IDX="4,5,6" ROW="2"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="3"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="4"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="5"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="6"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="7"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="8"/>
+<STYLE_IDX COL_IDX="7,8,10" ROW="9"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="10"/>
+<STYLE_IDX COL_IDX="0,2,11" ROW="11"/>
+<STYLE_IDX COL_IDX="7,8,10" ROW="12"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="13"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="14"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="15"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="16"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="17"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="18"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="19"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="20"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="21"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="22"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="23"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="24"/>
+<STYLE_IDX COL_IDX="7,8,9" ROW="25"/>
+<STYLE_IDX COL_IDX="0,2,3" ROW="26"/>
+<GRIDLAYER DIMENSIONNAME="Account"/>
+<GRIDLAYER DIMENSIONNAME="Custom3"/>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;NST&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Custom3&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;TOTC3&lt;/STRING&gt;&lt;STRING&gt;Custom3&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="1" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;505T&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="35" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;501&quot;, &quot;Custom3&quot;) ,  Member(&quot;510&quot;, &quot;Custom3&quot;) ,  Member(&quot;520T&quot;, &quot;Custom3&quot;) ,  Member(&quot;521T&quot;, &quot;Custom3&quot;) ,  Member(&quot;522&quot;, &quot;Custom3&quot;) ,  Member(&quot;523&quot;, &quot;Custom3&quot;) ,  Member(&quot;529&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;TLCwoPI&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="36" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;LTI&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="37" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADING="Total Labor Costs" HEADTYPE="4" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Custom3&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;TLC&lt;/STRING&gt;&lt;STRING&gt;Custom3&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="4" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;649_1&quot;, &quot;Custom3&quot;) ,  Member(&quot;649_2&quot;, &quot;Custom3&quot;) ,  Member(&quot;649_3&quot;, &quot;Custom3&quot;) ,  Member(&quot;687&quot;, &quot;Custom3&quot;) ,  Member(&quot;687_16&quot;, &quot;Custom3&quot;) ,  Member(&quot;642&quot;, &quot;Custom3&quot;) ,  Member(&quot;642_16&quot;, &quot;Custom3&quot;) ,  Member(&quot;634&quot;, &quot;Custom3&quot;) ,  Member(&quot;634_16&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;DEPRE&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;BADDEBT&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;629&quot;, &quot;Custom3&quot;) ,  Member(&quot;630T&quot;, &quot;Custom3&quot;) ,  Member(&quot;631&quot;, &quot;Custom3&quot;) ,  Member(&quot;633&quot;, &quot;Custom3&quot;) ,  Member(&quot;650T&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;FTE&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;641&quot;, &quot;Custom3&quot;) ,  Member(&quot;648&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;TECH_SUP&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;635&quot;, &quot;Custom3&quot;) ,  Member(&quot;636&quot;, &quot;Custom3&quot;) ,  Member(&quot;637&quot;, &quot;Custom3&quot;) ,  Member(&quot;638&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;TRAIN&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;632&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;OCCUP&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;663T&quot;, &quot;Custom3&quot;) ,  Member(&quot;644&quot;, &quot;Custom3&quot;) ,  Member(&quot;654&quot;, &quot;Custom3&quot;) ,  Member(&quot;660T&quot;, &quot;Custom3&quot;) ,  Member(&quot;668T&quot;, &quot;Custom3&quot;) ,  Member(&quot;GRTS&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;SELLING&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;684&quot;, &quot;Custom3&quot;) ,  Member(&quot;684_15&quot;, &quot;Custom3&quot;) ,  Member(&quot;684_16&quot;, &quot;Custom3&quot;) ,  Member(&quot;684IP&quot;, &quot;Custom3&quot;) ,  Member(&quot;684TEMP&quot;, &quot;Custom3&quot;) ,  Member(&quot;682T&quot;, &quot;Custom3&quot;) ,  Member(&quot;684IT_TOT&quot;, &quot;Custom3&quot;) ,  Member(&quot;693&quot;, &quot;Custom3&quot;) ,  Member(&quot;694T&quot;, &quot;Custom3&quot;) ,  Member(&quot;698&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;OUT_SERV&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;DCTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Custom3&quot; WHERE Member(&quot;640&quot;, &quot;Custom3&quot;) ,  Member(&quot;645&quot;, &quot;Custom3&quot;) ,  Member(&quot;646&quot;, &quot;Custom3&quot;) ,  Member(&quot;651&quot;, &quot;Custom3&quot;) ,  Member(&quot;652&quot;, &quot;Custom3&quot;) ,  Member(&quot;685T&quot;, &quot;Custom3&quot;) ,  Member(&quot;686&quot;, &quot;Custom3&quot;) ,  Member(&quot;688&quot;, &quot;Custom3&quot;) ,  Member(&quot;689&quot;, &quot;Custom3&quot;) ,  Member(&quot;690&quot;, &quot;Custom3&quot;) ,  Member(&quot;691&quot;, &quot;Custom3&quot;) ,  Member(&quot;695&quot;, &quot;Custom3&quot;) ,  Member(&quot;696&quot;, &quot;Custom3&quot;) ,  Member(&quot;699T&quot;, &quot;Custom3&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+</SEGMENTSET>

@@ -313,11 +313,12 @@ public final class ReportService {
         }
 
         List<String> linkNotes = new ArrayList<>();
+        List<Map<String, Object>> linkChecks = new ArrayList<>();
         if (axisLinks != null && !axisLinks.isEmpty()) {
             if (!isXmlReportCode(afterReplacements)) {
                 throw ApiException.badRequest("bad_request", "axisLinks only apply to Financial Reporting XML reports");
             }
-            afterReplacements = applyAxisLinks(afterReplacements, axisLinks, linkNotes);
+            afterReplacements = applyAxisLinks(s, afterReplacements, axisLinks, linkNotes, linkChecks);
         }
 
         String finalCode = sections != null && !sections.isEmpty()
@@ -351,6 +352,9 @@ public final class ReportService {
             out.put("replacementsApplied", replacementsApplied);
         }
         out.put("encoding", effectiveEncoding);
+        if (!linkChecks.isEmpty()) {
+            out.put("axisLinkChecks", linkChecks);
+        }
         out.put("charCount", finalCode.length());
         out.put("lineCount", countLines(finalCode));
         out.put("sections", parsedSections);
@@ -1459,7 +1463,8 @@ public final class ReportService {
      * SEGMENTSET (OBJECT_LINKNAME) ahead of the axes and drops every segment except those listed in
      * keep_segment_ids (comma-separated GRIDSEGMENT IDs; default none).
      */
-    private static String applyAxisLinks(String xml, List<Map<String, String>> links, List<String> notes) {
+    private String applyAxisLinks(UserSession s, String xml, List<Map<String, String>> links, List<String> notes,
+                                  List<Map<String, Object>> checks) {
         String result = xml;
         for (int i = 0; i < links.size(); i++) {
             Map<String, String> l = links.get(i);
@@ -1469,6 +1474,15 @@ public final class ReportService {
                 throw ApiException.badRequest("bad_request", "axisLinks[" + i + "] needs 'axis' and 'template'");
             }
             String axisName = axis.trim().toLowerCase(Locale.ROOT).startsWith("c") ? "Column" : "Row";
+            String renumber = firstNonNullKey(l, "renumber");
+            if (renumber != null && "true".equalsIgnoreCase(renumber.trim())) {
+                if (!"Row".equals(axisName)) {
+                    throw ApiException.badRequest("bad_request", "axisLinks[" + i + "]: renumber is verified for the "
+                            + "Row axis only; the Column axis has no Studio example yet and is refused.");
+                }
+                result = renumberRowLink(s, result, l, template.trim(), i, notes, checks);
+                continue;
+            }
             String ack = firstNonNullKey(l, "allow_unrenumbered", "allowUnrenumbered");
             if (ack == null || !"true".equalsIgnoreCase(ack.trim())) {
                 throw ApiException.badRequest("bad_request",
@@ -1541,6 +1555,81 @@ public final class ReportService {
                     + "formatting are NOT renumbered; check them in the preview.");
         }
         return result;
+    }
+
+    /** axisLinks item with renumber=true: Row axis, template inserted at POSITION 0 (see AxisLinkRenumberer). */
+    private String renumberRowLink(UserSession s, String xml, Map<String, String> l, String template, int idx,
+                                   List<String> notes, List<Map<String, Object>> checks) {
+        String[] split = splitFolderAndName(null, template);
+        ReportDetail t = findExisting(s, split[0], split[1], "FR_ROW_COLUMN");
+        if (t == null || blank(t.code)) {
+            throw ApiException.badRequest("bad_request", "axisLinks[" + idx + "]: row/column template '"
+                    + template + "' (FR_ROW_COLUMN) was not found or is empty");
+        }
+        AxisLinkRenumberer.Options o = new AxisLinkRenumberer.Options();
+        o.templateName = template.startsWith("/") ? template : "/" + template;
+        String axisId = firstNonNullKey(l, "axisId");
+        if (!blank(axisId)) {
+            o.axisId = axisId.trim();
+        }
+        String fs = firstNonNullKey(l, "formatSegment", "format_segment");
+        if (!blank(fs)) {
+            o.formatSegment = fs.trim();
+        }
+        String pos = firstNonNullKey(l, "position");
+        if (!blank(pos)) {
+            try {
+                o.position = Integer.parseInt(pos.trim());
+            } catch (NumberFormatException e) {
+                throw ApiException.badRequest("bad_request", "axisLinks[" + idx + "]: position must be a number");
+            }
+        }
+        String keepRaw = firstNonNullKey(l, "keep_segment_ids", "keepSegmentIds");
+        if (!blank(keepRaw)) {
+            for (String k : keepRaw.split("[,;\\s]+")) {
+                if (!k.isEmpty()) {
+                    o.keepIds.add(k);
+                }
+            }
+        }
+        String rowsRaw = firstNonNullKey(l, "segment_rows", "segmentRows");
+        if (!blank(rowsRaw)) {
+            for (String part : rowsRaw.split("[,;\\s]+")) {
+                if (part.isEmpty()) {
+                    continue;
+                }
+                String[] kv = part.split(":");
+                try {
+                    if (kv.length != 2) {
+                        throw new NumberFormatException();
+                    }
+                    int n = Integer.parseInt(kv[1].trim());
+                    if (n < 1) {
+                        throw new NumberFormatException();
+                    }
+                    o.segmentRows.put(kv[0].trim(), n);
+                } catch (NumberFormatException e) {
+                    throw ApiException.badRequest("bad_request",
+                            "axisLinks[" + idx + "]: segment_rows must look like 'ID:rows,ID:rows' (rows >= 1)");
+                }
+            }
+        }
+        String head = firstNonNullKey(l, "studio_head_rows", "studioHeadRows");
+        if (!blank(head)) {
+            try {
+                o.studioHeadRows = Integer.parseInt(head.trim());
+            } catch (NumberFormatException e) {
+                throw ApiException.badRequest("bad_request", "axisLinks[" + idx + "]: studio_head_rows must be a number");
+            }
+        }
+        String strict = firstNonNullKey(l, "strict_refs", "strictRefs");
+        o.strictRefs = strict != null && "true".equalsIgnoreCase(strict.trim());
+        String resave = firstNonNullKey(l, "studio_resave", "studioResave");
+        o.studioResave = resave == null || !"false".equalsIgnoreCase(resave.trim());
+        AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(xml, t.code, o);
+        notes.addAll(r.notes);
+        checks.addAll(r.checks);
+        return r.xml;
     }
 
     private static String firstNonNullKey(Map<String, String> map, String... keys) {

@@ -83,6 +83,14 @@ Creating, copying (`copy_from`), updating or deleting a report definition (`hfm_
 `Rows`/`Columns`/`PointOfView`, or full `code`) requires `REPORT_SAVE` (or `REPORT_DELETE`) in `actions.allowed` (off by
 default).
 
+**Linking a row template (`axis_links`, experimental).** `hfm_preview_report_save` can replace the Row axis of a copied
+report with a live link to an `FR_ROW_COLUMN` template. By default it only swaps the segments and refuses unless the item
+sets `allow_unrenumbered`. With `renumber: true` (Row axis, template at position 0) the daemon also reproduces what
+Financial Reporting Studio saves: `ROW_COUNT`, row properties and styles, cell styles and conditional formats, grid cell
+rows and formula row references. This is verified against one Studio-saved pair (`MONCOMP_DC`); see
+[docs/axis-link-renumbering.md](docs/axis-link-renumbering.md) for each rule, its evidence and the open items. Review the
+preview (`axisLinkChecks`) before saving.
+
 ## Actions (process control and consolidation)
 
 Off unless switched on in **both** places: `actions.enabled=true` in the daemon config, and

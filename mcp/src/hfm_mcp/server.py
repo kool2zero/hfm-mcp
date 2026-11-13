@@ -491,17 +491,26 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
                                                   "'regex': 'true' to treat find as a Java regex (DOTALL, MULTILINE) "
                                                   "and use $1 in replace for groups; fails if nothing matches.")] = None,
         axis_links: Annotated[list[dict[str, str]] | None,
-                              Field(description="Replace a grid axis with a live link to a row/column template: "
-                                                "[{'axis': 'Row', 'template': '/Templates/RowTemplates/DC', "
-                                                "'format_segment': '27', 'keep_segment_ids': '52,7,57'}]. Writes a "
-                                                "SEGMENTSET and drops every segment not in keep_segment_ids. Optional: "
-                                                "'position' (default 0), 'axisId' (default Row=2, Column=1, "
-                                                "Column unverified). EXPERIMENTAL: row/column counts, "
-                                                "properties, styles, conditional formats and formula references "
-                                                "are not renumbered, so each item is refused unless it sets "
-                                                "'allow_unrenumbered': 'true'; do not save such a result. To roll "
-                                                "out a linked layout, use copy_from on a report Studio already "
-                                                "linked.")] = None,
+                              Field(description="Replace a grid axis with a live link to a row/column template. "
+                                                "Item keys: 'axis', 'template' (e.g. '/Users/test'), "
+                                                "'keep_segment_ids' ('34,52,7'), optional 'format_segment', "
+                                                "'position', 'axisId' (default Row=2, Column=1). "
+                                                "EXPERIMENTAL. Default mode only swaps segments and is refused "
+                                                "unless 'allow_unrenumbered': 'true' (do not save that result). "
+                                                "With 'renumber': 'true' (Row axis, POSITION 0 only; Column is "
+                                                "refused) the daemon fetches the FR_ROW_COLUMN template and "
+                                                "reproduces what Studio saves: ROW_COUNT, ROW_PROP/STYLE_IDX, "
+                                                "cell styles and conditional formats, GRIDCELL rows and "
+                                                "formula row references (+ template segment count). Extra keys: "
+                                                "'segment_rows' ('ID:rows,...', needed when a segment renders "
+                                                "several rows so rows add up to ROW_COUNT), 'studio_head_rows' "
+                                                "(default 0; Studio kept the first N original row "
+                                                "properties in the one verified example, N=3, reason unknown), "
+                                                "'strict_refs': 'true' (fail instead of warn on formula "
+                                                "references to dropped/missing rows), 'studio_resave': 'false' "
+                                                "(skip EXPAND_PLACEMENT/GetHeading normalisation). Self-checks "
+                                                "are returned as axisLinkChecks in the plan. Verified against "
+                                                "ONE Studio pair only; review the preview before saving.")] = None,
         code: Annotated[str | None,
                         Field(description="Full report definition code/XML. Omit when updating an existing report or "
                                           "using `copy_from` with `replacements` or `sections`.")] = None,

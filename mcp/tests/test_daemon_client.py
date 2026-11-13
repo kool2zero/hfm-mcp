@@ -135,3 +135,33 @@ async def test_report_tools_wiring():
     ]
     assert calls[0][1] == {"reportTypes": ["JOURNAL"], "folder": None, "query": "monthly", "includePrivate": True}
     assert calls[3][1]["sections"] == {"Filter": {"Status": "WORKING"}}
+
+
+async def test_axis_links_schema_and_forwarding():
+    """axis_links keeps its guard text and documents the renumber option; items are forwarded unchanged."""
+    import json
+
+    from hfm_mcp.server import build_server
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        if request.url.path == "/api/v1/sessions":
+            return httpx.Response(200, json={"sessionId": "s1", "user": "jdoe", "application": "DEMO"})
+        calls.append((request.url.path, body))
+        return httpx.Response(200, json={"ok": True})
+
+    c = DaemonClient(SETTINGS, lambda: "secret", transport=httpx.MockTransport(handler))
+    srv = build_server(c, enable_actions=True, allowed_actions={"REPORT_SAVE"})
+    tools = {t.name: t for t in await srv.list_tools()}
+    desc = json.dumps(tools["hfm_preview_report_save"].input_schema["properties"]["axis_links"])
+    for needle in ("allow_unrenumbered", "renumber", "segment_rows", "studio_head_rows", "strict_refs",
+                   "axisLinkChecks", "Column is refused"):
+        assert needle in desc, needle
+
+    item = {"axis": "Row", "template": "/Users/test", "renumber": "true",
+            "keep_segment_ids": "34,52", "segment_rows": "8:4"}
+    await srv.call_tool("hfm_preview_report_save", {"name": "X", "copy_from": "Y", "axis_links": [item]})
+    assert calls[-1][0] == "/api/v1/reports/preview-save"
+    assert calls[-1][1]["axisLinks"] == [item]
