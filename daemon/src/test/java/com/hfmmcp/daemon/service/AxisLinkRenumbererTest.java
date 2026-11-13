@@ -52,7 +52,7 @@ class AxisLinkRenumbererTest {
 
     // -------------------------------------------------------------------- canonical per-element diff
 
-    private static List<String> canon(String xml) throws Exception {
+    static List<String> canon(String xml) throws Exception {
         DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
         Document d = f.newDocumentBuilder().parse(new InputSource(new StringReader(xml)));
         List<String> out = new ArrayList<>();
@@ -88,7 +88,7 @@ class AxisLinkRenumbererTest {
         }
     }
 
-    private static List<String> diff(List<String> mine, List<String> studio) {
+    static List<String> diff(List<String> mine, List<String> studio) {
         List<String> d = new ArrayList<>();
         int n = Math.max(mine.size(), studio.size());
         for (int i = 0; i < n; i++) {
@@ -192,12 +192,46 @@ class AxisLinkRenumbererTest {
         assertTrue(e.getMessage().contains("segment_rows"), e.getMessage());
     }
 
-    @Test
-    void positionOtherThanZero_isRefused() throws Exception {
-        AxisLinkRenumberer.Options o = dcOptions(3);
+    private static AxisLinkRenumberer.Options niOptions(int headRows) {
+        AxisLinkRenumberer.Options o = new AxisLinkRenumberer.Options();
+        o.templateName = "/Users/test2";
         o.position = 5;
+        o.keepIds.addAll(Arrays.asList("0,1,2,3,4,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,52,53,54,55,38,39,40,41,42,43,44,45,46,47".split(",")));
+        o.studioHeadRows = headRows;
+        o.formatSegment = "4";
+        o.numericHeadingCol = false;
+        o.segmentRows.put("21", 2);
+        o.segmentRows.put("22", 2);
+        o.segmentRows.put("23", 2);
+        return o;
+    }
+
+    @Test
+    void niPair_exactMatchWithStudio() throws Exception {
+        AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(res("MONCOMP_NI_JG.xml"),
+                res("test2_rows_template.xml"), niOptions(3));
+        assertSameAsStudio(r.xml, res("MONCOMP_NI_JG_LINKED.xml"));
+    }
+
+    @Test
+    void niPair_followRowMappingDiffersOnlyInRowPropsAndStyles() throws Exception {
+        AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(res("MONCOMP_NI_JG.xml"),
+                res("test2_rows_template.xml"), niOptions(0));
+        List<String> mine = withoutStyleElements(canon(r.xml));
+        List<String> studio = withoutStyleElements(canon(res("MONCOMP_NI_JG_LINKED.xml")));
+        List<String> full = diff(canon(r.xml), canon(res("MONCOMP_NI_JG_LINKED.xml")));
+        assertFalse(full.isEmpty(), "the boundary row item should still show up as a difference");
+        List<String> d = diff(mine, studio);
+        assertTrue(d.isEmpty(), "differences outside ROW_PROP/STYLE_IDX/CELL_STYLE/COND_FORMAT:\n"
+                + String.join("\n", d.subList(0, Math.min(10, d.size()))));
+    }
+
+    @Test
+    void negativePosition_isRefused() throws Exception {
+        AxisLinkRenumberer.Options o = dcOptions(3);
+        o.position = -1;
         ApiException e = assertThrows(ApiException.class, () -> AxisLinkRenumberer.link(
                 res("MONCOMP_DC.original.xml"), res("DC_rows_template.xml"), o));
-        assertTrue(e.getMessage().contains("POSITION 0"), e.getMessage());
+        assertTrue(e.getMessage().contains("non-negative POSITION"), e.getMessage());
     }
 }

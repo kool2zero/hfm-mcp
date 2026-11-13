@@ -66,6 +66,7 @@ final class AxisLinkRenumberer {
         int studioHeadRows = 0;
         boolean strictRefs = false;
         boolean studioResave = true;          // R7
+        boolean numericHeadingCol = true;
     }
 
     static final class Result {
@@ -79,9 +80,8 @@ final class AxisLinkRenumberer {
     private static final Pattern REF_COLROW = Pattern.compile("\\[([A-Za-z]+)\\s*,\\s*(\\d+)\\]");
 
     static Result link(String xml, String templateXml, Options o) {
-        if (o.position != 0) {
-            throw bad("renumber supports POSITION 0 only (no verified example for other positions or for a "
-                    + "template placed after existing rows).");
+        if (o.position < 0) {
+            throw bad("renumber supports non-negative POSITION only.");
         }
         if (o.keepIds.isEmpty()) {
             throw bad("renumber needs keep_segment_ids (the report's own rows to keep).");
@@ -209,8 +209,9 @@ final class AxisLinkRenumberer {
         }
         List<Element> newRp = new ArrayList<>();
         List<Element> newSi = new ArrayList<>();
+        int boundary = Math.min(n, o.position + o.studioHeadRows);
         for (int i = 0; i < n; i++) {
-            int src = i < o.studioHeadRows ? i : keptRows.get(i);
+            int src = i < boundary ? i : keptRows.get(i);
             Element a = (Element) rp.get(src).cloneNode(true);
             a.setAttribute("ROW", String.valueOf(i));
             newRp.add(a);
@@ -238,6 +239,20 @@ final class AxisLinkRenumberer {
             }
         }
         Set<String> keepCf = new HashSet<>();
+        for (int r : keptRows) {
+            Element rowSi = si.get(r);
+            if (rowSi != null) {
+                for (String s : rowSi.getAttribute("COL_IDX").split(",")) {
+                    Element cs = styles.get(s);
+                    if (cs != null) {
+                        String cf = cs.getAttribute("COND_FORMAT");
+                        if (!cf.isEmpty()) {
+                            keepCf.add(cf);
+                        }
+                    }
+                }
+            }
+        }
         boolean changed = true;
         while (changed) {
             changed = false;
@@ -324,6 +339,7 @@ final class AxisLinkRenumberer {
         int refsShifted = 0;
         NodeList des = grid.getElementsByTagName("DERIVEDEXPRESSION");
         List<Integer> originalTargets = new ArrayList<>();
+        int formulaShift = o.position == 0 ? tSegs : (tSegs - dropSegs.size());
         for (int i = 0; i < des.getLength(); i++) {
             Element d = (Element) des.item(i);
             String v = d.getAttribute("VALUE");
@@ -335,8 +351,11 @@ final class AxisLinkRenumberer {
             while (m.find()) {
                 int t = Integer.parseInt(m.group(1));
                 originalTargets.add(t);
-                refsShifted++;
-                m.appendReplacement(sb, "[" + (t + tSegs) + "]");
+                int shift = (t < o.position) ? 0 : formulaShift;
+                if (shift != 0) {
+                    refsShifted++;
+                }
+                m.appendReplacement(sb, "[" + (t + shift) + "]");
             }
             m.appendTail(sb);
             StringBuffer sb2 = new StringBuffer();
@@ -348,8 +367,11 @@ final class AxisLinkRenumberer {
             }
             while (m2.find()) {
                 int t = Integer.parseInt(m2.group(2));
-                refsShifted++;
-                m2.appendReplacement(sb2, Matcher.quoteReplacement("[" + m2.group(1) + "," + (t + tSegs) + "]"));
+                int shift = (t < o.position) ? 0 : formulaShift;
+                if (shift != 0) {
+                    refsShifted++;
+                }
+                m2.appendReplacement(sb2, Matcher.quoteReplacement("[" + m2.group(1) + "," + (t + shift) + "]"));
             }
             m2.appendTail(sb2);
             String nv = sb2.toString();
@@ -394,7 +416,7 @@ final class AxisLinkRenumberer {
                 Element me = (Element) mex.item(i);
                 String h = me.getAttribute("HEADING");
                 if (!h.isEmpty()) {
-                    String nh = studioHeading(h);
+                    String nh = studioHeading(h, o.numericHeadingCol);
                     if (!nh.equals(h)) {
                         me.setAttribute("HEADING", nh);
                     }
@@ -419,17 +441,23 @@ final class AxisLinkRenumberer {
     private static final Pattern GET_HEADING = Pattern.compile(
             "GetHeading\\(\\s*\"?([^\",()]+?)\"?\\s*,\\s*(\\d+)\\s*,\\s*([A-Za-z]+)\\s*,\\s*(\\d+)\\s*\\)");
 
-    /** GetHeading("Grid1",1,F,3) becomes GetHeading(Grid1, 1, 6, 3), as Studio writes it. */
-    static String studioHeading(String h) {
+    /** GetHeading("Grid1",1,F,3) becomes GetHeading(Grid1, 1, 6, 3) or GetHeading(Grid1, 1, F, 3), as Studio writes it. */
+    static String studioHeading(String h, boolean numericCol) {
         Matcher m = GET_HEADING.matcher(h);
         StringBuffer sb = new StringBuffer();
         while (m.find()) {
-            int col = 0;
-            for (char ch : m.group(3).toUpperCase(java.util.Locale.ROOT).toCharArray()) {
-                col = col * 26 + (ch - 'A' + 1);
+            String colStr;
+            if (numericCol) {
+                int col = 0;
+                for (char ch : m.group(3).toUpperCase(java.util.Locale.ROOT).toCharArray()) {
+                    col = col * 26 + (ch - 'A' + 1);
+                }
+                colStr = String.valueOf(col);
+            } else {
+                colStr = m.group(3);
             }
             m.appendReplacement(sb, Matcher.quoteReplacement("GetHeading(" + m.group(1) + ", " + m.group(2) + ", "
-                    + col + ", " + m.group(4) + ")"));
+                    + colStr + ", " + m.group(4) + ")"));
         }
         m.appendTail(sb);
         return sb.toString();
@@ -449,6 +477,8 @@ final class AxisLinkRenumberer {
         add(res, failures, "row_count_matches_row_props_and_style_idx", counts,
                 "ROW_COUNT=" + grid.getAttribute("ROW_COUNT") + ", ROW_PROP=" + rpN + ", STYLE_IDX=" + siN);
         // 2 GRIDCELL ROW range
+        Element colAxis = axis(grid, "Column");
+        int maxHeaderRows = colAxis == null ? 10 : Math.max(2, children(colAxis, "GRIDLAYER").size());
         boolean cellsOk = true;
         String badCell = "";
         Element matrix = firstChild(grid, "GRIDMATRIX");
@@ -456,14 +486,15 @@ final class AxisLinkRenumberer {
             NodeList cl = matrix.getElementsByTagName("GRIDCELL");
             for (int i = 0; i < cl.getLength(); i++) {
                 int r = parseInt(((Element) cl.item(i)).getAttribute("ROW"), Integer.MIN_VALUE);
-                if (r < -2 || r >= n) {
+                if (r < -maxHeaderRows || r >= n) {
                     cellsOk = false;
                     badCell = String.valueOf(r);
                 }
             }
         }
         add(res, failures, "gridcell_rows_in_range", cellsOk,
-                cellsOk ? "all GRIDCELL ROW values within -2.." + (n - 1) : "GRIDCELL ROW " + badCell + " outside -2.." + (n - 1));
+                cellsOk ? "all GRIDCELL ROW values within -" + maxHeaderRows + ".." + (n - 1)
+                        : "GRIDCELL ROW " + badCell + " outside -" + maxHeaderRows + ".." + (n - 1));
         // 3 COND_FORMAT / CELL_STYLE contiguity and links
         boolean cfContig = contiguousIndex(children(grid, "COND_FORMAT"));
         boolean stContig = contiguousIndex(children(grid, "CELL_STYLE"));

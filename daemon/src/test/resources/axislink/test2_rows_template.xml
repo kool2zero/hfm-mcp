@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<SEGMENTSET DATASOURCE_ID="-6e9e5626_128b90ec6b2_-76e3" DESCRIPTION="" NAME="/Users/test2" SAVED_PROPS="0000" SAVE_AXIS="2" VERSION="2.5">
+<SEGMENT_PROP SEGMENT="0"/>
+<SEGMENT_PROP SEGMENT="1"/>
+<SEGMENT_PROP SEGMENT="2"/>
+<SEGMENT_PROP SEGMENT="3"/>
+<SEGMENT_PROP SEGMENT="4"/>
+<SEGMENT_PROP SEGMENT="5"/>
+<SEGMENT_PROP SEGMENT="6"/>
+<SEGMENT_PROP SEGMENT="7"/>
+<SEGMENT_PROP SEGMENT="8"/>
+<SEGMENT_PROP SEGMENT="9"/>
+<SEGMENT_PROP SEGMENT="10"/>
+<SEGMENT_PROP SEGMENT="11"/>
+<SEGMENT_PROP SEGMENT="12"/>
+<SEGMENT_PROP SEGMENT="13"/>
+<SEGMENT_PROP SEGMENT="14"/>
+<CELL_STYLE FONT_NAME="Arial" FONT_SIZE="9" INDEX="0"/>
+<CELL_STYLE FONT_NAME="Arial" FONT_SIZE="9" HALIGN="2" INDEX="1" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="9" INDEX="2"/>
+<CELL_STYLE BORDER_TOP="1" FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="9" HALIGN="2" INDEX="3" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE BORDER_BOTTOM="1" FONT_NAME="Arial" FONT_SIZE="9" HALIGN="2" INDEX="4" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="9" HALIGN="2" INDEX="5" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<CELL_STYLE BORDER_BOTTOM="1" FONT_BOLD="1" FONT_NAME="Arial" FONT_SIZE="9" HALIGN="2" INDEX="6" NUM_NEG_PREFIX="(" NUM_NEG_SUFFIX=")" NUM_SCALE_BY="1000.0"/>
+<STYLE_IDX COL_IDX="0,1" ROW="0"/>
+<STYLE_IDX COL_IDX="2,3" ROW="1"/>
+<STYLE_IDX COL_IDX="0,1" ROW="2"/>
+<STYLE_IDX COL_IDX="0,1" ROW="3"/>
+<STYLE_IDX COL_IDX="2,3" ROW="4"/>
+<STYLE_IDX COL_IDX="0,1" ROW="5"/>
+<STYLE_IDX COL_IDX="0,1" ROW="6"/>
+<STYLE_IDX COL_IDX="0,1" ROW="7"/>
+<STYLE_IDX COL_IDX="0,1" ROW="8"/>
+<STYLE_IDX COL_IDX="0,1" ROW="9"/>
+<STYLE_IDX COL_IDX="0,1" ROW="10"/>
+<STYLE_IDX COL_IDX="0,4" ROW="11"/>
+<STYLE_IDX COL_IDX="2,5" ROW="12"/>
+<STYLE_IDX COL_IDX="0,4" ROW="13"/>
+<STYLE_IDX COL_IDX="2,6" ROW="14"/>
+<GRIDLAYER DIMENSIONNAME="Account"/>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;COMPOSITEOPERATION TYPE=&quot;List&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;301N&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;302&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;303T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;311T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;321T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;322T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;OIS&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="7" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;325&quot;, &quot;Account&quot;) ,  Member(&quot;BDFTOT&quot;, &quot;Account&quot;) ,  Member(&quot;COUPON&quot;, &quot;Account&quot;) ,  Member(&quot;326&quot;, &quot;Account&quot;) ,  Member(&quot;323&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;NST&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="10" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;341T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;360T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;351MFG&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;351OTH&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="SELECT * FROM &quot;Account&quot; WHERE Member(&quot;FXREVALTOT&quot;, &quot;Account&quot;)"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;344T&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;TCOG&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+<GRIDSEGMENT ID="18" SEGMENT_TYPE="2">
+<DERIVEDEXPRESSION VALUE="@TEXT"/>
+</GRIDSEGMENT>
+<GRIDSEGMENT>
+<SEGMENTLAYER>
+<METADATAEXPRESSION HEADTYPE="2" VALUE="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#10;&lt;COMPOSITEOPERATION TYPE=&quot;MemberQuery&quot;&gt;&lt;OPERATION TYPE=&quot;Select&quot;&gt;&lt;MULTIVALUE&gt;&lt;STRING&gt;*&lt;/STRING&gt;&lt;/MULTIVALUE&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;COMPOSITEOPERATION TYPE=&quot;Filter&quot;&gt;&lt;OPERATION TYPE=&quot;Member&quot;&gt;&lt;STRING&gt;GP&lt;/STRING&gt;&lt;STRING&gt;Account&lt;/STRING&gt;&lt;/OPERATION&gt;&lt;/COMPOSITEOPERATION&gt;&lt;/COMPOSITEOPERATION&gt;"/>
+</SEGMENTLAYER>
+</GRIDSEGMENT>
+</SEGMENTSET>
