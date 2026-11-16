@@ -891,7 +891,7 @@ class ApiServerTest {
     }
 
     @Test
-    void accountHierarchyNavigationSharedMembersAndPaging() throws IOException {
+    void accountHierarchyNavigationSharedMembersAndPaging() throws Exception {
         java.util.List<MemberInfo> accountHierarchy = new java.util.ArrayList<>();
         accountHierarchy.add(new MemberInfo("[None]", "None", null, null));
         accountHierarchy.add(new MemberInfo("INCOME", "Income IFRS Format", null, null));
