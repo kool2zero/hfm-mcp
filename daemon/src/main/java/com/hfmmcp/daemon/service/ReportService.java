@@ -222,6 +222,17 @@ public final class ReportService {
                                            String fileType, String copyFrom,
                                            List<Map<String, String>> replacements,
                                            List<Map<String, String>> axisLinks) {
+        return previewSave(s, name, reportType, folder, code, sections, description, securityClass,
+                isPrivate, fileType, copyFrom, replacements, axisLinks, null);
+    }
+
+    public Map<String, Object> previewSave(UserSession s, String name, String reportType, String folder,
+                                           String code, Map<String, Map<String, String>> sections,
+                                           String description, String securityClass, Boolean isPrivate,
+                                           String fileType, String copyFrom,
+                                           List<Map<String, String>> replacements,
+                                           List<Map<String, String>> axisLinks,
+                                           List<Map<String, Object>> bookEdits) {
         requireAllowed(SAVE);
         if (blank(name)) {
             throw ApiException.badRequest("bad_request", "name is required");
@@ -321,6 +332,29 @@ public final class ReportService {
             afterReplacements = applyAxisLinks(s, afterReplacements, axisLinks, linkNotes, linkChecks);
         }
 
+        List<String> bookNotes = new ArrayList<>();
+        List<Map<String, Object>> bookChecks = new ArrayList<>();
+        if (bookEdits != null && !bookEdits.isEmpty()) {
+            if (!isXmlReportCode(afterReplacements)) {
+                throw ApiException.badRequest("bad_request", "bookEdits only apply to Financial Reporting XML books");
+            }
+            BookEditor.Result br = BookEditor.apply(afterReplacements, bookEdits);
+            for (String refReport : br.touchedReports) {
+                String[] refSplit = splitFolderAndName(null, refReport);
+                ReportDetail found = findExisting(s, refSplit[0], refSplit[1], "FR_REPORT");
+                if (found == null) {
+                    found = findExisting(s, refSplit[0], refSplit[1], "FR_BOOK");
+                }
+                if (found == null) {
+                    throw ApiException.badRequest("bad_request",
+                            "bookEdits referenced report '" + refReport + "' not found in repository");
+                }
+            }
+            afterReplacements = br.xml;
+            bookNotes.addAll(br.notes);
+            bookChecks.addAll(br.checks);
+        }
+
         String finalCode = sections != null && !sections.isEmpty()
                 ? applySections(afterReplacements, sections)
                 : afterReplacements;
@@ -332,6 +366,7 @@ public final class ReportService {
         Map<String, Map<String, String>> parsedSections = parseSections(finalCode);
         List<String> warnings = validateSectionPov(s, parsedSections, isXmlReportCode(finalCode));
         warnings.addAll(linkNotes);
+        warnings.addAll(bookNotes);
 
         ReportInfo info = new ReportInfo(trimmedName, effectiveType, effectiveFileType, effectiveFolder,
                 effectiveDesc, effectiveSec, effectivePriv, s.userName(), System.currentTimeMillis());
@@ -354,6 +389,9 @@ public final class ReportService {
         out.put("encoding", effectiveEncoding);
         if (!linkChecks.isEmpty()) {
             out.put("axisLinkChecks", linkChecks);
+        }
+        if (!bookChecks.isEmpty()) {
+            out.put("bookChecks", bookChecks);
         }
         out.put("charCount", finalCode.length());
         out.put("lineCount", countLines(finalCode));

@@ -165,3 +165,30 @@ async def test_axis_links_schema_and_forwarding():
     await srv.call_tool("hfm_preview_report_save", {"name": "X", "copy_from": "Y", "axis_links": [item]})
     assert calls[-1][0] == "/api/v1/reports/preview-save"
     assert calls[-1][1]["axisLinks"] == [item]
+
+
+async def test_book_edits_schema_and_forwarding():
+    import json
+    from hfm_mcp.server import build_server
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        if request.url.path == "/api/v1/sessions":
+            return httpx.Response(200, json={"sessionId": "s1", "user": "jdoe", "application": "DEMO"})
+        calls.append((request.url.path, body))
+        return httpx.Response(200, json={"ok": True})
+
+    c = DaemonClient(SETTINGS, lambda: "secret", transport=httpx.MockTransport(handler))
+    srv = build_server(c, enable_actions=True, allowed_actions={"REPORT_SAVE"})
+    tools = {t.name: t for t in await srv.list_tools()}
+    desc = json.dumps(tools["hfm_preview_report_save"].input_schema["properties"]["book_edits"])
+    for needle in ("move", "remove", "add", "swap_report", "set_member_selection", "REF_COUNT"):
+        assert needle in desc, needle
+
+    edits = [{"action": "move", "fromIndex": 1, "direction": "up"},
+             {"action": "set_member_selection", "index": 2, "dimension": "Custom2", "members": ["PSP", "TOTC2"]}]
+    await srv.call_tool("hfm_preview_report_save", {"name": "TEST_BOOK", "copy_from": "ME_SPORT", "book_edits": edits})
+    assert calls[-1][0] == "/api/v1/reports/preview-save"
+    assert calls[-1][1]["bookEdits"] == edits

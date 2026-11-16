@@ -55,6 +55,8 @@ public final class ApiServer {
             new TypeReference<LinkedHashMap<String, Map<String, String>>>() { };
     private static final TypeReference<List<Map<String, String>>> REPLACEMENTS_LIST =
             new TypeReference<List<Map<String, String>>>() { };
+    private static final TypeReference<List<Map<String, Object>>> OBJECT_MAP_LIST =
+            new TypeReference<List<Map<String, Object>>>() { };
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<List<String>>() { };
     private static final TypeReference<List<Integer>> INT_LIST = new TypeReference<List<Integer>>() { };
 
@@ -288,6 +290,9 @@ public final class ApiServer {
                         ? convert(b.get("replacements"), REPLACEMENTS_LIST, "replacements") : null;
                 List<Map<String, String>> axisLinks = b.hasNonNull("axisLinks")
                         ? convert(b.get("axisLinks"), REPLACEMENTS_LIST, "axisLinks") : null;
+                List<Map<String, Object>> bookEdits = b.hasNonNull("bookEdits")
+                        ? convert(b.get("bookEdits"), OBJECT_MAP_LIST, "bookEdits")
+                        : (b.hasNonNull("book_edits") ? convert(b.get("book_edits"), OBJECT_MAP_LIST, "book_edits") : null);
                 Boolean isPrivate = b.hasNonNull("private") ? b.get("private").asBoolean() : null;
                 String copyFrom = text(b, "copyFrom");
                 if (copyFrom == null) {
@@ -295,7 +300,7 @@ public final class ApiServer {
                 }
                 return actions.reports().previewSave(s, text(b, "name"), text(b, "reportType"), text(b, "folder"),
                         text(b, "code"), sections, text(b, "description"), text(b, "securityClass"), isPrivate,
-                        text(b, "fileType"), copyFrom, replacements, axisLinks);
+                        text(b, "fileType"), copyFrom, replacements, axisLinks, bookEdits);
             }
             case "POST /api/v1/reports/preview-delete": {
                 JsonNode b = readBody(ex);

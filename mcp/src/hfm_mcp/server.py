@@ -511,6 +511,15 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
                                                 "(skip EXPAND_PLACEMENT/GetHeading normalisation). Self-checks "
                                                 "are returned as axisLinkChecks in the plan. Verified against "
                                                 "ONE Studio pair only; review the preview before saving.")] = None,
+        book_edits: Annotated[list[dict[str, Any]] | None,
+                              Field(description="Optional structured edits for FR_BOOK (<BOOK>) definitions. "
+                                                "Each item has an 'action': "
+                                                "'move' ('fromIndex'/'report', 'toIndex' or 'direction': 'up'/'down'), "
+                                                "'remove' ('index' or 'report', optional 'all': true), "
+                                                "'add' ('report', optional 'position', optional 'selections': {dim: members}), "
+                                                "'swap_report' ('fromReport', 'toReport', optional 'index'), "
+                                                "'set_member_selection' ('index'/'report', 'dimension', 'members': ['PSP', 'TOTC2'] or ['Book Point of View']). "
+                                                "Automatically recalculates BOOK_POV REF_COUNTs and validates target reports exist.")] = None,
         code: Annotated[str | None,
                         Field(description="Full report definition code/XML. Omit when updating an existing report or "
                                           "using `copy_from` with `replacements` or `sections`.")] = None,
@@ -528,7 +537,8 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         returns a single-use `planId` and the updated `sections`. Show the changes to the user and get their
         explicit confirmation before calling hfm_execute_action."""
         body = {"name": name, "reportType": report_type, "folder": folder, "copyFrom": copy_from,
-                "replacements": replacements, "axisLinks": axis_links, "code": code, "sections": sections, "description": description,
+                "replacements": replacements, "axisLinks": axis_links, "bookEdits": book_edits,
+                "code": code, "sections": sections, "description": description,
                 "securityClass": security_class, "private": private}
         return await call(client.post, "/api/v1/reports/preview-save", body)
 
