@@ -191,9 +191,10 @@ public final class ApiServer {
                 return service.dimensions(s);
             case "GET /api/v1/members":
                 return service.members(s, required(q, "dimension"), q.get("member"), q.get("relation"),
-                        q.get("expression"), intParam(q, "limit"));
+                        q.get("expression"), intParam(q, "limit"), intParam(q, "offset"));
             case "GET /api/v1/members/search":
-                return service.search(s, required(q, "dimension"), required(q, "q"), intParam(q, "limit"));
+                return service.search(s, required(q, "dimension"), required(q, "q"),
+                        intParam(q, "limit"), intParam(q, "offset"));
             case "POST /api/v1/cells": {
                 JsonNode b = readBody(ex);
                 Map<String, String> pov = map(b, "pov");

@@ -890,6 +890,129 @@ class ApiServerTest {
         assertEquals("action_not_allowed", r.body.at("/error/code").asText());
     }
 
+    @Test
+    void accountHierarchyNavigationSharedMembersAndPaging() throws IOException {
+        java.util.List<MemberInfo> accountHierarchy = new java.util.ArrayList<>();
+        accountHierarchy.add(new MemberInfo("[None]", "None", null, null));
+        accountHierarchy.add(new MemberInfo("INCOME", "Income IFRS Format", null, null));
+        accountHierarchy.add(new MemberInfo("TOTNI", "Net Income", "INCOME", null));
+        accountHierarchy.add(new MemberInfo("NI", "Net Income (before MI)", "TOTNI", null));
+        accountHierarchy.add(new MemberInfo("IBT", "Income before Taxes", "NI", null));
+        accountHierarchy.add(new MemberInfo("IFO", "Income from Operations", "IBT", null));
+        accountHierarchy.add(new MemberInfo("SHARED_ACC", "Shared Account", "IFO", null));
+        accountHierarchy.add(new MemberInfo("BC", "Gross Margin", "IFO", null));
+        accountHierarchy.add(new MemberInfo("GP", "Gross Profit", "BC", null));
+        accountHierarchy.add(new MemberInfo("NST", "Net Sales", "GP", null));
+        for (int i = 1; i <= 120; i++) {
+            accountHierarchy.add(new MemberInfo(String.format("ACC%03d", i), "Account " + i, "NST", null));
+        }
+        accountHierarchy.add(new MemberInfo("SHARED_ACC", "Shared Account", "GP", null));
+        accountHierarchy.add(new MemberInfo("OTHER_ROOT", "Other Root", null, null));
+        accountHierarchy.add(new MemberInfo("OTHER_LEAF", "Other Leaf", "OTHER_ROOT", null));
+
+        MockHfmBackend mock = new MockHfmBackend();
+        HfmBackend accountBackend = (HfmBackend) java.lang.reflect.Proxy.newProxyInstance(
+                HfmBackend.class.getClassLoader(),
+                new Class<?>[] {HfmBackend.class},
+                (proxy, method, args) -> {
+                    if ("expandMembers".equals(method.getName())
+                            && "Account".equalsIgnoreCase((String) args[1])) {
+                        return accountHierarchy;
+                    }
+                    try {
+                        return method.invoke(mock, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+
+        DaemonConfig cfg = new DaemonConfig(props);
+        SessionManager sm = new SessionManager(accountBackend, 60_000, 10);
+        HfmService svc = new HfmService(accountBackend, sm, new LoginThrottle(2, 60_000), cfg);
+        ActionService act = new ActionService(accountBackend, svc, cfg, new AuditLog(auditFile));
+        ApiServer srv = new ApiServer(cfg, svc, act, sm);
+        srv.start();
+        String origBase = this.base;
+        this.base = "http://127.0.0.1:" + srv.port();
+        try {
+            String sid = login("jdoe", "password");
+
+            JsonNode kids = ok(call("GET", "/api/v1/members?dimension=Account&member=INCOME&relation=children",
+                    null, KEY, sid));
+            assertEquals(1, kids.get("total").asInt());
+            assertEquals("TOTNI", kids.at("/members/0/name").asText());
+            assertEquals("INCOME", kids.at("/members/0/parent").asText());
+
+            JsonNode anc = ok(call("GET", "/api/v1/members?dimension=Account&member=NST&relation=ancestors",
+                    null, KEY, sid));
+            java.util.Set<String> ancNames = new java.util.HashSet<>();
+            for (JsonNode m : anc.get("members")) {
+                String n = m.get("name").asText();
+                ancNames.add(n);
+                if (!"INCOME".equals(n)) {
+                    assertNotNull(m.get("parent"), "non-root ancestor should have parent: " + m);
+                }
+            }
+            assertTrue(ancNames.contains("GP"));
+            assertTrue(ancNames.contains("BC"));
+            assertTrue(ancNames.contains("IFO"));
+            assertTrue(ancNames.contains("INCOME"));
+
+            JsonNode baseMembers = ok(call("GET",
+                    "/api/v1/members?dimension=Account&expression=%7BINCOME.%5BBase%5D%7D&limit=500",
+                    null, KEY, sid));
+            assertTrue(baseMembers.get("total").asInt() > 100);
+            assertFalse(baseMembers.get("truncated").asBoolean());
+            java.util.List<String> sharedParents = new java.util.ArrayList<>();
+            for (JsonNode m : baseMembers.get("members")) {
+                String n = m.get("name").asText();
+                assertFalse("INCOME".equals(n), "{INCOME.[Base]} must not include INCOME itself");
+                assertTrue(m.hasNonNull("parent"), "every base member must have a parent: " + m);
+                if ("SHARED_ACC".equals(n)) {
+                    sharedParents.add(m.get("parent").asText());
+                }
+            }
+            assertEquals(2, sharedParents.size(), "shared member must appear once per parent");
+            assertTrue(sharedParents.contains("IFO"));
+            assertTrue(sharedParents.contains("GP"));
+
+            JsonNode subtree = ok(call("GET",
+                    "/api/v1/members?dimension=Account&expression=%7BINCOME.%5BHierarchy%5D%7D&limit=500",
+                    null, KEY, sid));
+            assertEquals(accountHierarchy.size() - 3, subtree.get("total").asInt()); // excludes [None], OTHER_ROOT, OTHER_LEAF
+            java.util.Set<String> subtreeNames = new java.util.HashSet<>();
+            for (JsonNode m : subtree.get("members")) {
+                subtreeNames.add(m.get("name").asText());
+            }
+            assertTrue(subtreeNames.contains("INCOME"));
+            assertTrue(subtreeNames.contains("NST"));
+            assertFalse(subtreeNames.contains("OTHER_ROOT"));
+            assertFalse(subtreeNames.contains("OTHER_LEAF"));
+
+            JsonNode page1 = ok(call("GET",
+                    "/api/v1/members?dimension=Account&expression=%7BINCOME.%5BHierarchy%5D%7D&limit=60&offset=0",
+                    null, KEY, sid));
+            assertEquals(60, page1.get("returned").asInt());
+            assertTrue(page1.get("truncated").asBoolean());
+
+            JsonNode page2 = ok(call("GET",
+                    "/api/v1/members?dimension=Account&expression=%7BINCOME.%5BHierarchy%5D%7D&limit=60&offset=60",
+                    null, KEY, sid));
+            assertEquals(60, page2.get("returned").asInt());
+            assertEquals(60, page2.get("offset").asInt());
+            assertTrue(page2.get("truncated").asBoolean());
+
+            JsonNode page3 = ok(call("GET",
+                    "/api/v1/members?dimension=Account&expression=%7BINCOME.%5BHierarchy%5D%7D&limit=60&offset=120",
+                    null, KEY, sid));
+            assertEquals(subtree.get("total").asInt() - 120, page3.get("returned").asInt());
+            assertFalse(page3.get("truncated").asBoolean());
+        } finally {
+            this.base = origBase;
+            srv.stop();
+        }
+    }
+
     private JsonNode execute(String sid, String previewBody) throws IOException {
         JsonNode plan = ok(call("POST", "/api/v1/actions/preview", previewBody, KEY, sid));
         return ok(call("POST", "/api/v1/actions/execute", "{\"planId\":\"" + plan.get("planId").asText() + "\"}", KEY, sid));

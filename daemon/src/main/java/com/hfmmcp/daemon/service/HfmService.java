@@ -39,6 +39,7 @@ public final class HfmService {
         RELATIONS.put("base", "[Base]");
         RELATIONS.put("parents", "[Parents]");
         RELATIONS.put("ancestors", "[Ancestors]");
+        RELATIONS.put("hierarchy", "[Hierarchy]");
     }
 
     /** What each calc status in a cells response means, for whoever reads the numbers. */
@@ -149,6 +150,11 @@ public final class HfmService {
      */
     public Map<String, Object> members(UserSession s, String dimension, String member, String relation,
                                        String expression, int limit) {
+        return members(s, dimension, member, relation, expression, limit, 0);
+    }
+
+    public Map<String, Object> members(UserSession s, String dimension, String member, String relation,
+                                       String expression, int limit, int offset) {
         DimensionInfo dim = metadata(s).resolver.resolve(dimension);
         String expr;
         if (expression != null && !expression.trim().isEmpty()) {
@@ -168,11 +174,15 @@ public final class HfmService {
                 expr = "{" + member.trim() + "." + list + "}";
             }
         }
-        return memberPage(dim, expr, expand(s, dim, expr), clampLimit(limit));
+        return memberPage(dim, expr, expand(s, dim, expr), clampOffset(offset), clampLimit(limit));
     }
 
     /** Case-insensitive search on member name and description, best matches first. */
     public Map<String, Object> search(UserSession s, String dimension, String query, int limit) {
+        return search(s, dimension, query, limit, 0);
+    }
+
+    public Map<String, Object> search(UserSession s, String dimension, String query, int limit, int offset) {
         if (query == null || query.trim().isEmpty()) {
             throw ApiException.badRequest("bad_request", "query is required");
         }
@@ -200,7 +210,7 @@ public final class HfmService {
         List<MemberInfo> ranked = new ArrayList<>(exact);
         ranked.addAll(prefix);
         ranked.addAll(contains);
-        return memberPage(dim, null, ranked, clampLimit(limit));
+        return memberPage(dim, null, ranked, clampOffset(offset), clampLimit(limit));
     }
 
     /**
@@ -597,12 +607,13 @@ public final class HfmService {
         base.put(p, saved);
     }
 
-    private Map<String, Object> memberPage(DimensionInfo dim, String expr, List<MemberInfo> members, int limit) {
+    private Map<String, Object> memberPage(DimensionInfo dim, String expr, List<MemberInfo> members, int offset,
+                                           int limit) {
+        int start = Math.min(Math.max(0, offset), members.size());
+        int end = Math.min(members.size(), start + limit);
         List<Map<String, Object>> list = new ArrayList<>();
-        for (MemberInfo m : members) {
-            if (list.size() >= limit) {
-                break;
-            }
+        for (int i = start; i < end; i++) {
+            MemberInfo m = members.get(i);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("name", m.name());
             if (m.description() != null && !m.description().isEmpty()) {
@@ -629,8 +640,11 @@ public final class HfmService {
         if (distinct.size() != members.size()) {
             out.put("distinctMembers", distinct.size()); // shared members appear once per parent
         }
+        if (start > 0) {
+            out.put("offset", start);
+        }
         out.put("returned", list.size());
-        out.put("truncated", members.size() > list.size());
+        out.put("truncated", end < members.size());
         out.put("members", list);
         return out;
     }
@@ -656,7 +670,7 @@ public final class HfmService {
     }
 
     private static final java.util.Set<String> LOCAL_RELATIONS = new java.util.HashSet<>(Arrays.asList(
-            "member", "children", "descendants", "base", "parents", "ancestors"));
+            "member", "children", "descendants", "base", "parents", "ancestors", "hierarchy"));
 
     static List<MemberInfo> relation(List<MemberInfo> hierarchy, DimensionInfo d, String member, String rel) {
         Map<String, MemberInfo> byName = new LinkedHashMap<>();
@@ -694,6 +708,12 @@ public final class HfmService {
             case "children":
                 out.addAll(children.getOrDefault(key, new ArrayList<>()));
                 break;
+            case "hierarchy":
+                out.add(self);
+                seen.add(key);
+                collectSubtree(key, false, children, seen, out);
+                seen.remove(key);
+                break;
             case "descendants":
             case "base":
                 boolean baseOnly = "base".equals(rel);
@@ -701,24 +721,9 @@ public final class HfmService {
                     out.add(self); // a base member is its own base
                     break;
                 }
-                java.util.Deque<MemberInfo> stack = new java.util.ArrayDeque<>();
-                List<MemberInfo> top = children.getOrDefault(key, new ArrayList<>());
-                for (int i = top.size() - 1; i >= 0; i--) {
-                    stack.push(top.get(i));
-                }
-                while (!stack.isEmpty()) {
-                    MemberInfo m = stack.pop();
-                    String k = m.name().toUpperCase(Locale.ROOT);
-                    List<MemberInfo> kids = children.get(k);
-                    if ((!baseOnly || kids == null) && seen.add(k)) {
-                        out.add(m);
-                    }
-                    if (kids != null) {
-                        for (int i = kids.size() - 1; i >= 0; i--) {
-                            stack.push(kids.get(i));
-                        }
-                    }
-                }
+                seen.add(key);
+                collectSubtree(key, baseOnly, children, seen, out);
+                seen.remove(key);
                 break;
             default: // parents, ancestors
                 java.util.Deque<String> queue = new java.util.ArrayDeque<>(parents.getOrDefault(key, new ArrayList<>()));
@@ -735,6 +740,34 @@ public final class HfmService {
                 }
         }
         return out;
+    }
+
+    /** Pre-order traversal of {@code parentKey}'s subtree; shared members appear once per parent. */
+    private static void collectSubtree(String parentKey, boolean baseOnly,
+                                       Map<String, List<MemberInfo>> children,
+                                       java.util.Set<String> onPath, List<MemberInfo> out) {
+        List<MemberInfo> kids = children.get(parentKey);
+        if (kids == null) {
+            return;
+        }
+        for (MemberInfo m : kids) {
+            String k = m.name().toUpperCase(Locale.ROOT);
+            if (!onPath.add(k)) {
+                continue; // cycle guard
+            }
+            boolean isLeaf = !children.containsKey(k);
+            if (!baseOnly || isLeaf) {
+                out.add(m);
+            }
+            if (!isLeaf) {
+                collectSubtree(k, baseOnly, children, onPath, out);
+            }
+            onPath.remove(k);
+        }
+    }
+
+    private int clampOffset(int offset) {
+        return Math.max(0, offset);
     }
 
     private int clampLimit(int limit) {

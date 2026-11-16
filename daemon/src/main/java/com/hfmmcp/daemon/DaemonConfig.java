@@ -102,7 +102,7 @@ public final class DaemonConfig {
     }
 
     public int maxMembersPerRequest() {
-        return getInt("limits.maxMembersPerRequest", 2000);
+        return getInt("limits.maxMembersPerRequest", 20000);
     }
 
     public int authMaxFailures() {

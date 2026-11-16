@@ -400,7 +400,11 @@ public final class OracleHfmBackend implements HfmBackend {
             Matcher bare = BARE_SYSTEM_LIST.matcher(expr);
             String listName = bare.matches() ? bare.group(1) : expr;
             try {
-                return withRetry(() -> byList(info, dimensionName, listName));
+                List<MemberInfo> members = withRetry(() -> byList(info, dimensionName, listName));
+                if ("[Hierarchy]".equalsIgnoreCase(listName)) {
+                    return enrichParents(info, dimensionName, members);
+                }
+                return members;
             } catch (HFMException e) {
                 BackendException be = classify(e, "list " + expr + " in " + dimensionName);
                 if (be.kind() == Kind.SESSION_INVALID || be.kind() == Kind.AUTH_EXPIRED) {
@@ -414,6 +418,154 @@ public final class OracleHfmBackend implements HfmBackend {
         } catch (HFMException e) {
             throw classify(e, "expand " + expr + " in " + dimensionName);
         }
+    }
+
+    /**
+     * HFM only parent-qualifies {@code Entity} member names ({@code GROUP.UK01}) in {@code [Hierarchy]};
+     * for {@code Account}, {@code CustomN}, {@code Period}, etc. {@code getParentName()} comes back
+     * empty. When no member has a parent, reconstruct the parent-child tree by querying direct
+     * children of every non-base member via {@link MetadataFilter#setParentName(String)}.
+     */
+    private List<MemberInfo> enrichParents(SessionInfo info, String dimensionName, List<MemberInfo> hierarchy)
+            throws BackendException {
+        if (hierarchy.size() <= 1 || hasAnyParent(hierarchy)) {
+            return hierarchy;
+        }
+        List<MemberInfo> baseMembers;
+        try {
+            baseMembers = withRetry(() -> byList(info, dimensionName, "[Base]"));
+        } catch (HFMException e) {
+            BackendException be = classify(e, "list [Base] in " + dimensionName);
+            if (be.kind() == Kind.SESSION_INVALID || be.kind() == Kind.AUTH_EXPIRED) {
+                throw be;
+            }
+            LOG.log(Level.FINE, "Cannot list [Base] for " + dimensionName + "; returning flat hierarchy", e);
+            return hierarchy;
+        }
+        Set<String> baseNames = new HashSet<>();
+        for (MemberInfo b : baseMembers) {
+            baseNames.add(b.name().toUpperCase(Locale.ROOT));
+        }
+        Map<String, MemberInfo> byName = new LinkedHashMap<>();
+        for (MemberInfo m : hierarchy) {
+            byName.putIfAbsent(m.name().toUpperCase(Locale.ROOT), m);
+        }
+        List<MemberInfo> parents = new ArrayList<>();
+        for (Map.Entry<String, MemberInfo> e : byName.entrySet()) {
+            if (!baseNames.contains(e.getKey())) {
+                parents.add(e.getValue());
+            }
+        }
+        if (parents.isEmpty()) {
+            return hierarchy;
+        }
+
+        Map<String, List<MemberInfo>> childrenMap = new LinkedHashMap<>();
+        Set<String> allChildKeys = new HashSet<>();
+        boolean useNullList = false;
+        boolean triedListMode = false;
+        for (MemberInfo p : parents) {
+            String pKey = p.name().toUpperCase(Locale.ROOT);
+            List<MemberInfo> kids = null;
+            if (!triedListMode) {
+                triedListMode = true;
+                try {
+                    kids = withRetry(() -> childrenOf(info, dimensionName, p.name(), "[Children]"));
+                } catch (HFMException e) {
+                    BackendException be = classify(e, "children of " + p.name() + " in " + dimensionName);
+                    if (be.kind() == Kind.SESSION_INVALID || be.kind() == Kind.AUTH_EXPIRED) {
+                        throw be;
+                    }
+                    try {
+                        kids = withRetry(() -> childrenOf(info, dimensionName, p.name(), null));
+                        useNullList = true;
+                    } catch (HFMException e2) {
+                        BackendException be2 = classify(e2, "children of " + p.name() + " in " + dimensionName);
+                        if (be2.kind() == Kind.SESSION_INVALID || be2.kind() == Kind.AUTH_EXPIRED) {
+                            throw be2;
+                        }
+                        LOG.log(Level.FINE, "childrenOf failed for " + dimensionName + ":" + p.name(), e2);
+                    }
+                }
+            } else {
+                final String listMode = useNullList ? null : "[Children]";
+                try {
+                    kids = withRetry(() -> childrenOf(info, dimensionName, p.name(), listMode));
+                } catch (HFMException e) {
+                    BackendException be = classify(e, "children of " + p.name() + " in " + dimensionName);
+                    if (be.kind() == Kind.SESSION_INVALID || be.kind() == Kind.AUTH_EXPIRED) {
+                        throw be;
+                    }
+                    LOG.log(Level.FINE, "childrenOf failed for " + dimensionName + ":" + p.name(), e);
+                }
+            }
+            if (kids != null && !kids.isEmpty()) {
+                childrenMap.put(pKey, kids);
+                for (MemberInfo k : kids) {
+                    String ck = k.name().toUpperCase(Locale.ROOT);
+                    allChildKeys.add(ck);
+                    byName.putIfAbsent(ck, k);
+                }
+            }
+        }
+        if (allChildKeys.isEmpty()) {
+            return hierarchy;
+        }
+
+        List<MemberInfo> roots = new ArrayList<>();
+        for (Map.Entry<String, MemberInfo> e : byName.entrySet()) {
+            if (!allChildKeys.contains(e.getKey())) {
+                roots.add(e.getValue());
+            }
+        }
+        List<MemberInfo> rebuilt = new ArrayList<>(hierarchy.size());
+        Set<String> onPath = new HashSet<>();
+        for (MemberInfo root : roots) {
+            appendSubtree(root, null, childrenMap, onPath, rebuilt);
+        }
+        return rebuilt.isEmpty() ? hierarchy : rebuilt;
+    }
+
+    private static boolean hasAnyParent(List<MemberInfo> members) {
+        for (MemberInfo m : members) {
+            if (m.parent() != null && !m.parent().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void appendSubtree(MemberInfo node, String parentName, Map<String, List<MemberInfo>> childrenMap,
+                                      Set<String> onPath, List<MemberInfo> out) {
+        String key = node.name().toUpperCase(Locale.ROOT);
+        if (!onPath.add(key)) {
+            return;
+        }
+        out.add(new MemberInfo(node.name(), node.description(), parentName, node.raw()));
+        List<MemberInfo> kids = childrenMap.get(key);
+        if (kids != null) {
+            for (MemberInfo kid : kids) {
+                appendSubtree(kid, node.name(), childrenMap, onPath, out);
+            }
+        }
+        onPath.remove(key);
+    }
+
+    private List<MemberInfo> childrenOf(SessionInfo info, String dimensionName, String parentName, String listName)
+            throws HFMException, BackendException {
+        MetadataFilter filter = new MetadataFilter();
+        filter.setDimensionName(dimensionName);
+        filter.setParentName(parentName);
+        if (listName != null) {
+            filter.setListName(listName);
+        }
+        MetadataViewOption view = new MetadataViewOption();
+        view.setIncludeParent(false);
+        RecordSetRange all = new RecordSetRange();
+        all.setStartIndex(0);
+        all.setEndIndex(-1);
+        view.setResultSetRange(all);
+        return toMembers(new MetadataOM(info).getMembers(filter, view));
     }
 
     private List<MemberInfo> byList(SessionInfo info, String dimensionName, String listExpression)

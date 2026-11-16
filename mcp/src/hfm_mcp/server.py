@@ -167,7 +167,7 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
             str | None, Field(description="Member to navigate from. Omit to list the whole hierarchy.")
         ] = None,
         relation: Annotated[
-            Literal["children", "descendants", "base", "parents", "ancestors", "member"],
+            Literal["children", "descendants", "base", "parents", "ancestors", "hierarchy", "member"],
             Field(description="Which members related to `member` to return; 'member' just validates it."),
         ] = "children",
         expression: Annotated[
@@ -175,12 +175,15 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
             Field(description="Advanced: an HFM member list such as '{Group.[Base]}' or a named list "
                               "'{MyList}'. Overrides member/relation."),
         ] = None,
-        limit: Annotated[int, Field(ge=1, le=2000, description="Maximum members to return")] = 200,
+        limit: Annotated[int, Field(ge=1, le=20000, description="Maximum members to return")] = 200,
+        offset: Annotated[
+            int, Field(ge=0, description="0-based index of the first member to return, for paging")
+        ] = 0,
     ) -> dict[str, Any]:
-        """Navigate a dimension hierarchy: children, descendants, base members, parents or ancestors
-        of a member. Returns names, descriptions and parents, plus `total` and `truncated`."""
+        """Navigate a dimension hierarchy: children, descendants, base members, parents, ancestors or
+        subtree hierarchy of a member. Returns names, descriptions and parents, plus `total` and `truncated`."""
         params = {"dimension": dimension, "member": member, "relation": relation,
-                  "expression": expression, "limit": limit}
+                  "expression": expression, "limit": limit, "offset": offset}
         return await call(client.get, "/api/v1/members", params)
 
     @server.tool(annotations=READ_ONLY)

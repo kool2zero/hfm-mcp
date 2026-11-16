@@ -192,3 +192,31 @@ async def test_book_edits_schema_and_forwarding():
     await srv.call_tool("hfm_preview_report_save", {"name": "TEST_BOOK", "copy_from": "ME_SPORT", "book_edits": edits})
     assert calls[-1][0] == "/api/v1/reports/preview-save"
     assert calls[-1][1]["bookEdits"] == edits
+
+
+async def test_get_members_paging_and_hierarchy_forwarding():
+    from hfm_mcp.server import build_server
+
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/sessions":
+            return httpx.Response(200, json={"sessionId": "s1", "user": "jdoe", "application": "DEMO"})
+        calls.append((request.url.path, dict(request.url.params)))
+        return httpx.Response(200, json={"dimension": "Account", "total": 5926, "returned": 0, "truncated": False, "members": []})
+
+    c = DaemonClient(SETTINGS, lambda: "secret", transport=httpx.MockTransport(handler))
+    srv = build_server(c, enable_actions=False)
+    tools = {t.name: t for t in await srv.list_tools()}
+    schema = tools["hfm_get_members"].input_schema["properties"]
+    assert schema["limit"]["maximum"] == 20000
+    assert "offset" in schema
+    assert "hierarchy" in schema["relation"]["enum"]
+
+    await srv.call_tool("hfm_get_members", {"dimension": "Account", "member": "INCOME", "relation": "hierarchy", "limit": 6000, "offset": 200})
+    assert calls[-1][0] == "/api/v1/members"
+    assert calls[-1][1]["dimension"] == "Account"
+    assert calls[-1][1]["member"] == "INCOME"
+    assert calls[-1][1]["relation"] == "hierarchy"
+    assert calls[-1][1]["limit"] == "6000"
+    assert calls[-1][1]["offset"] == "200"
