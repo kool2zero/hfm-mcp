@@ -1971,7 +1971,6 @@ public final class ReportService {
             case "FR_REPORT":
             case "FR_SNAPSHOT_REPORT":
             case "FR_GRID":
-            case "FR_ROW_COLUMN":
             case "FR_TEXT":
                 return "ZIP:UTF-8";
             default:

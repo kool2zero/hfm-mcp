@@ -1933,12 +1933,12 @@ public final class OracleHfmBackend implements HfmBackend {
                 ? existing.parentUuid
                 : findFrParentFolderUuid(normFolder, sourceNode);
 
-        boolean zipCompressed = (encoding != null && encoding.toUpperCase(Locale.ROOT).startsWith("ZIP:"))
-                || "des".equalsIgnoreCase(repoType)
-                || "rog".equalsIgnoreCase(repoType)
-                || "ros".equalsIgnoreCase(repoType)
-                || "rot".equalsIgnoreCase(repoType)
-                || "rpt".equalsIgnoreCase(repoType);
+        boolean zipCompressed = notBlank(encoding)
+                ? encoding.trim().toUpperCase(Locale.ROOT).startsWith("ZIP:")
+                : ("des".equalsIgnoreCase(repoType)
+                        || "rog".equalsIgnoreCase(repoType)
+                        || "rot".equalsIgnoreCase(repoType)
+                        || "rpt".equalsIgnoreCase(repoType));
         byte[] payload = encodeFrBytes(code, encoding, zipCompressed);
         long now = ri.lastModified > 0 ? ri.lastModified : System.currentTimeMillis();
         byte[] nowLongBytes = java.nio.ByteBuffer.allocate(8).putLong(now).array();
