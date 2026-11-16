@@ -1938,21 +1938,38 @@ public final class OracleHfmBackend implements HfmBackend {
     private FrRepoNode findDonorFrNode(String normFolder, String reportType) {
         List<FrRepoNode> nodes = loadFrRepositoryNodes(false);
         FrRepoNode anyMatch = null;
+        FrRepoNode folderFallback = null;
+        FrRepoNode anyFallback = null;
         for (FrRepoNode node : nodes) {
             if ("FOLDER".equals(node.reportType) || node.internal || node.hidden) {
                 continue;
             }
-            if (reportType != null && !reportType.equalsIgnoreCase(node.reportType)) {
-                continue;
-            }
-            if (node.folderPath.equalsIgnoreCase(normFolder)) {
-                return node;
-            }
-            if (anyMatch == null) {
-                anyMatch = node;
+            boolean inFolder = node.folderPath.equalsIgnoreCase(normFolder);
+            if (reportType == null || reportType.equalsIgnoreCase(node.reportType)) {
+                if (inFolder) {
+                    return node;
+                }
+                if (anyMatch == null) {
+                    anyMatch = node;
+                }
+            } else {
+                // Fallback for types with no existing objects yet (e.g. first FR_ROW_COLUMN),
+                // so newly created nodes still inherit ACLs and DataSourceIDs.
+                if (inFolder && (folderFallback == null || "FR_REPORT".equalsIgnoreCase(node.reportType))) {
+                    if (!"FR_REPORT".equalsIgnoreCase(folderFallback != null ? folderFallback.reportType : null)) {
+                        folderFallback = node;
+                    }
+                }
+                if (anyFallback == null || ("FR_REPORT".equalsIgnoreCase(node.reportType)
+                        && !"FR_REPORT".equalsIgnoreCase(anyFallback.reportType))) {
+                    anyFallback = node;
+                }
             }
         }
-        return anyMatch;
+        if (anyMatch != null) {
+            return anyMatch;
+        }
+        return folderFallback != null ? folderFallback : anyFallback;
     }
 
     private String findFrParentFolderUuid(String normFolder, FrRepoNode sourceNode) throws BackendException {
