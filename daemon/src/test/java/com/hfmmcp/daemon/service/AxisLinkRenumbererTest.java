@@ -226,6 +226,32 @@ class AxisLinkRenumbererTest {
                 + String.join("\n", d.subList(0, Math.min(10, d.size()))));
     }
 
+    private static AxisLinkRenumberer.Options bcOptions(int headRows) {
+        AxisLinkRenumberer.Options o = new AxisLinkRenumberer.Options();
+        o.templateName = "/Monthly Comparatives/test3";
+        o.position = 21;
+        o.keepIds.addAll(Arrays.asList("0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,26,27,28,29,30,31,32,33,34".split(",")));
+        o.studioHeadRows = headRows;
+        o.formatSegment = "20";
+        o.segmentRows.put("8", 4);
+        o.studioResave = false;
+        return o;
+    }
+
+    @Test
+    void bcPair_exactMatchWithStudio() throws Exception {
+        AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(res("MONCOMP_BC.xml"),
+                res("test3_rows_template.xml"), bcOptions(3));
+        assertSameAsStudio(r.xml, res("MONCOMP_BC_linked.xml"));
+    }
+
+    @Test
+    void bcPair_exactMatchWithStudio_headRowsZero() throws Exception {
+        AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(res("MONCOMP_BC.xml"),
+                res("test3_rows_template.xml"), bcOptions(0));
+        assertSameAsStudio(r.xml, res("MONCOMP_BC_linked.xml"));
+    }
+
     @Test
     void negativePosition_isRefused() throws Exception {
         AxisLinkRenumberer.Options o = dcOptions(3);
