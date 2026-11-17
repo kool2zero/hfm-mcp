@@ -17,7 +17,7 @@ Evidence: **three** independent Studio pairs:
 | R5 | `GRIDCELL ROW` of kept rows is renumbered to the new own row; negative header rows ($-1 \dots -\text{colLayers}$) unchanged. A cell on a dropped row fails the call | DC pair (27 to 0, 34 to 7); NI pair (header rows $-3, -2, -1$ preserved, row 0 preserved); BC pair (header rows preserved) | Verified across 3 pairs |
 | R6 | Row references in `DERIVEDEXPRESSION` (`[n]`, `[Col,n]`): targets before $P$ shift by $0$; targets at or after $P$ shift by $+(T - D)$ where $T$ is template segments and $D$ is dropped segments. When $T = D$ (NI: 15 dropped replaced by 15; BC: 5 dropped replaced by 5), shift is 0 | DC: $+27$; NI: $+0$; BC: $+0$, exact | Verified across 3 pairs |
 | R7 | Studio adds `EXPAND_PLACEMENT="0"` to the grid and normalizes `METADATAEXPRESSION HEADING` `GetHeading(...)` removing quotes and spacing arguments. Supports numeric col conversion (DC: `F` $\to$ `6`), letter preservation (NI: `F`), or leaving unchanged when `studio_resave: false` (BC) | DC, NI, BC pairs | Verified across 3 pairs |
-| - | `FORMAT_SEGMENT`: defaults to template segment count (DC: 27), or explicitly configured via `format_segment` (NI: "4"; BC: "20") | DC, NI, BC pairs | Verified across 3 pairs |
+| - | `FORMAT_SEGMENT`: defaults to `position - 1` when `position > 0` (NI: "4"; BC: "20") or template segment count when `position == 0` (DC: "27"); can also be explicitly overridden via `format_segment` | DC, NI, BC pairs, exact | Verified across 3 pairs |
 
 ## Things the XML cannot tell us
 

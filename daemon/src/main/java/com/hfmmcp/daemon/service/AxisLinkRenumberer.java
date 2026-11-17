@@ -59,7 +59,7 @@ final class AxisLinkRenumberer {
     static final class Options {
         String templateName;
         String axisId = "2";
-        String formatSegment;                 // default: template segment count (one example)
+        String formatSegment;                 // default: position - 1 when position > 0, else template segment count
         int position = 0;
         Set<String> keepIds = new HashSet<>();
         Map<String, Integer> segmentRows = new LinkedHashMap<>();
@@ -387,7 +387,8 @@ final class AxisLinkRenumberer {
         Element tag = doc.createElement("SEGMENTSET");
         tag.setAttribute("AXIS", o.axisId);
         tag.setAttribute("FORMAT_PRECEDENCE", "1");
-        tag.setAttribute("FORMAT_SEGMENT", o.formatSegment != null ? o.formatSegment : String.valueOf(tSegs));
+        String defaultFormatSeg = o.position > 0 ? String.valueOf(o.position - 1) : String.valueOf(tSegs);
+        tag.setAttribute("FORMAT_SEGMENT", o.formatSegment != null ? o.formatSegment : defaultFormatSeg);
         tag.setAttribute("FORMULA_PRECEDENCE", "1");
         tag.setAttribute("OBJECT_LINKNAME", o.templateName);
         tag.setAttribute("POSITION", String.valueOf(o.position));

@@ -198,7 +198,6 @@ class AxisLinkRenumbererTest {
         o.position = 5;
         o.keepIds.addAll(Arrays.asList("0,1,2,3,4,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,52,53,54,55,38,39,40,41,42,43,44,45,46,47".split(",")));
         o.studioHeadRows = headRows;
-        o.formatSegment = "4";
         o.numericHeadingCol = false;
         o.segmentRows.put("21", 2);
         o.segmentRows.put("22", 2);
@@ -232,7 +231,6 @@ class AxisLinkRenumbererTest {
         o.position = 21;
         o.keepIds.addAll(Arrays.asList("0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,26,27,28,29,30,31,32,33,34".split(",")));
         o.studioHeadRows = headRows;
-        o.formatSegment = "20";
         o.segmentRows.put("8", 4);
         o.studioResave = false;
         return o;
