@@ -42,10 +42,14 @@ This document records the empirical evidence and rules implemented in `AxisLinkR
   - With `SAVED_PROPS="1111"`, Financial Reporting honors per-segment `HEIGHT` and `SUPPRESSION` (`"-1"` If Missing, `"-2"` If Zero, `"-3"` If Zero or Missing) on `<SEGMENT_PROP>`.
 - **Template-Relative Formula References (`<DERIVEDEXPRESSION>`)**:
   - 1-based `[row]` references inside `<DERIVEDEXPRESSION>` in a `.ros` template are relative to the template (`1 .. tSegs`). When extracting rows starting at 0-based `POSITION="P"` from an unlinked report, shift `[row]` references inside the extracted template segments by **`-P`** (`[row - P]`) and preserve `HEADING="..."` on `<DERIVEDEXPRESSION>`, because FR adds `+P` at runtime when the template is linked at `POSITION="P"`.
-- **`<STYLE_IDX>` & `<CELL_STYLE>` Omission & Column Inheritance**:
-  - **CRUCIAL RULE: Omit `<CELL_STYLE>` and `<STYLE_IDX>` entirely from `.ros` Row Templates.**
-  - When `<CELL_STYLE>` and `<STYLE_IDX>` are present in `.ros`, FR forces the template's single data cell style (which typically scales numbers by `1000` with `0` decimals) across all columns of the linked rows, destroying column-level `%`, `% Chg`, and `Index` formatting (`= #.#`).
-  - When `<CELL_STYLE>` and `<STYLE_IDX>` are **omitted** (keeping only `<SEGMENT_PROP>`, `<GRIDLAYER>`, and `<GRIDSEGMENT>`), Financial Reporting automatically applies the parent `.des` grid's column styles across all columns of the linked rows—preserving `#` on currency columns and `= #.#` on percentage/index columns without needing a Column Template.
+- **`<STYLE_IDX>` & `<CELL_STYLE>` Handling by Link Position**:
+  - **For Links at `POSITION > 0` (`BC`, `BRS`, `NI`, `OI`, `FX`, etc.)**:
+    - Omit `<CELL_STYLE>` and `<STYLE_IDX>` entirely from the `.ros` Row Template (keeping only `<SEGMENT_PROP>`, `<GRIDLAYER>`, and `<GRIDSEGMENT>`). Financial Reporting automatically applies the parent `.des` grid's column `<STYLE_IDX>` and `<CELL_STYLE>` formatting across all 21 columns of the linked rows.
+    - Ensure `STYLE_IDX ROW="P"` (at link position `P`) in the parent report uses neutral unbordered styles with currency scaled by 1,000 and unsuppressed percentage styles (`NUM_DECIMALS="1"` without `REPLACE="1" REPLACE_TEXT="<empty>"`).
+    - Maintain `FORMAT_SEGMENT="P - 1"` (e.g. `4` for `POSITION="5"`) to preserve KPI row calculations (such as `ANSP`).
+  - **For Links at `POSITION == 0` (`DC`, `GA`, `MF`, `MK`, `RD`, `SL`)**:
+    - Shift all report column formula row coordinates targeting kept rows (`>= 0`) by `+tSegs` (e.g. `PercentOfTotal([Col],[Col,1])` -> `[Col, 1 + tSegs]`: `[Col,28]` for 27-segment templates; `[Col,43]` for 42-segment templates).
+    - Retain the template's own data cell styles (`<CELL_STYLE>` and `<STYLE_IDX>`) so linked rows do not inherit the suppressed Net Sales Total formatting from parent `STYLE_IDX ROW="0"`.
 - **Row Border Inheritance in Parent Report**:
   - When `<STYLE_IDX>` is omitted from `.ros`, row-border styling for linked rows inherits from the parent report's `STYLE_IDX` at `ROW="P"` (where `P` is the link position/offset in `STYLE_IDX`).
   - If the parent report has a bottom border at that position (e.g. `BORDER_BOTTOM="1"` on a separator row above Gross Profit), all linked rows will inherit that underline.
