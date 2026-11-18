@@ -42,7 +42,15 @@ This document records the empirical evidence and rules implemented in `AxisLinkR
   - With `SAVED_PROPS="1111"`, Financial Reporting honors per-segment `HEIGHT` and `SUPPRESSION` (`"-1"` If Missing, `"-2"` If Zero, `"-3"` If Zero or Missing) on `<SEGMENT_PROP>`.
 - **Template-Relative Formula References (`<DERIVEDEXPRESSION>`)**:
   - 1-based `[row]` references inside `<DERIVEDEXPRESSION>` in a `.ros` template are relative to the template (`1 .. tSegs`). When extracting rows starting at 0-based `POSITION="P"` from an unlinked report, shift `[row]` references inside the extracted template segments by **`-P`** (`[row - P]`) and preserve `HEADING="..."` on `<DERIVEDEXPRESSION>`, because FR adds `+P` at runtime when the template is linked at `POSITION="P"`.
-- **`<STYLE_IDX>` Column Count**:
-  - A `.ros` Row Template stores 1 style index per row-heading column plus **1** data cell style index (`COL_IDX="0,1"` for 1 heading layer, `COL_IDX="0,1,2"` for 2 heading layers).
+- **`<STYLE_IDX>` & `<CELL_STYLE>` Omission & Column Inheritance**:
+  - **CRUCIAL RULE: Omit `<CELL_STYLE>` and `<STYLE_IDX>` entirely from `.ros` Row Templates.**
+  - When `<CELL_STYLE>` and `<STYLE_IDX>` are present in `.ros`, FR forces the template's single data cell style (which typically scales numbers by `1000` with `0` decimals) across all columns of the linked rows, destroying column-level `%`, `% Chg`, and `Index` formatting (`= #.#`).
+  - When `<CELL_STYLE>` and `<STYLE_IDX>` are **omitted** (keeping only `<SEGMENT_PROP>`, `<GRIDLAYER>`, and `<GRIDSEGMENT>`), Financial Reporting automatically applies the parent `.des` grid's column styles across all columns of the linked rows—preserving `#` on currency columns and `= #.#` on percentage/index columns without needing a Column Template.
+- **Row Border Inheritance in Parent Report**:
+  - When `<STYLE_IDX>` is omitted from `.ros`, row-border styling for linked rows inherits from the parent report's `STYLE_IDX` at `ROW="P"` (where `P` is the link position/offset in `STYLE_IDX`).
+  - If the parent report has a bottom border at that position (e.g. `BORDER_BOTTOM="1"` on a separator row above Gross Profit), all linked rows will inherit that underline.
+  - To prevent unwanted underlines under linked rows, update the parent report's `STYLE_IDX` at that row index to use unbordered cell styles (e.g. `COL_IDX="16,19,44,19,44,44..."`).
+- **`<STYLE_IDX>` Column Count (when present)**:
+  - If a `.ros` Row Template does define `<STYLE_IDX>`, it only stores 1 style index per row-heading column plus **1** data cell style index (`COL_IDX="0,1"` for 1 heading layer, `COL_IDX="0,1,2"` for 2 heading layers); additional column indices are ignored by Financial Reporting.
 
 **All three golden pairs and the 180-page runtime book comparison pass with 100% exact match.**

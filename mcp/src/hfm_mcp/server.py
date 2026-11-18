@@ -100,13 +100,24 @@ Financial Reporting Row & Column Templates (FR_ROW_COLUMN, .ros) & Axis Linking 
     Missing) or custom row `HEIGHT`s that differ from `FORMAT_SEGMENT`, set `SAVED_PROPS="1111"` on
     the `.ros` `<SEGMENTSET>` and include `HEIGHT` and `SUPPRESSION` on each `<SEGMENT_PROP>`.
 - `<STYLE_IDX>` & `<CELL_STYLE>` in `.ros`:
-  - A `.ros` Row Template only stores 1 style index per row-heading layer plus 1 data cell style
-    index (`COL_IDX="h0,d"` for 1 heading layer, `COL_IDX="h0,h1,d"` for 2 heading layers); FR
-    ignores additional column indices in `.ros`.
-  - When a Row Template is linked into a grid whose columns are inline (not a linked Column
-    Template), FR applies the Row Template's data `<CELL_STYLE>` across all columns of the linked
-    rows (`Precedence For: Row Template / Column Template` only activates when both rows and columns
-    are linked templates).
+  - **CRUCIAL RULE: Omit `<CELL_STYLE>` and `<STYLE_IDX>` entirely from `.ros` Row Templates.**
+    When `<CELL_STYLE>` and `<STYLE_IDX>` are present in `.ros`, FR forces the template's single data cell
+    style (which typically scales numbers by `1000` with `0` decimals) across all columns of the linked rows,
+    destroying column-level `%`, `% Chg`, and `Index` formatting (`= #.#`).
+    When `<CELL_STYLE>` and `<STYLE_IDX>` are **omitted** (keeping only `<SEGMENT_PROP>`, `<GRIDLAYER>`, and
+    `<GRIDSEGMENT>`), Financial Reporting automatically applies the parent `.des` grid's column styles
+    across all columns of the linked rows—preserving `#` on currency columns and `= #.#` on percentage/index
+    columns without needing a linked Column Template.
+  - **Row Border Inheritance**:
+    When `<STYLE_IDX>` is omitted from `.ros`, row-border styling for linked rows inherits from the parent
+    report's `STYLE_IDX` at `ROW="P"` (where `P` is the link position/offset in `STYLE_IDX`). If the parent
+    report has a bottom border at that position (e.g. `BORDER_BOTTOM="1"` on a separator row above Gross
+    Profit), all linked rows will inherit that underline. To prevent unwanted underlines under linked rows,
+    update the parent report's `STYLE_IDX` at that row index to use unbordered cell styles
+    (e.g. `COL_IDX="16,19,44,19,44,44..."`).
+  - When a `.ros` file does include `<STYLE_IDX>`, it only stores 1 style index per row-heading layer plus
+    1 data cell style index (`COL_IDX="h0,d"` for 1 heading layer, `COL_IDX="h0,h1,d"` for 2 heading layers);
+    FR ignores additional column indices in `.ros`.
 - `<GRIDSEGMENT>` & formulas inside `.ros`:
   - Standard metadata `<GRIDSEGMENT>`s in `.ros` omit `ID="..."` (keep `ID` only on `SEGMENT_TYPE="1"`
     formula rows and `SEGMENT_TYPE="2"` text rows) and must preserve `HEADING="..."` and `HEADTYPE`
