@@ -47,6 +47,7 @@ class AxisLinkRenumbererTest {
         o.keepIds.addAll(Arrays.asList("34,52,7,57,61,58,59,56,64,8,9".split(",")));
         o.segmentRows.put("8", 4);          // segment ID 8 renders 4 rows (41 rows = 38 segments + 3)
         o.studioHeadRows = headRows;
+        o.studioInsertBeforeDeleteShift = true;
         return o;
     }
 
@@ -257,5 +258,17 @@ class AxisLinkRenumbererTest {
         ApiException e = assertThrows(ApiException.class, () -> AxisLinkRenumberer.link(
                 res("MONCOMP_DC.original.xml"), res("DC_rows_template.xml"), o));
         assertTrue(e.getMessage().contains("non-negative POSITION"), e.getMessage());
+    }
+
+    @Test
+    void dcPair_defaultPreservesRuntimeFormulaReferences() throws Exception {
+        AxisLinkRenumberer.Options o = dcOptions(3);
+        o.studioInsertBeforeDeleteShift = false;
+        AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(res("MONCOMP_DC.original.xml"),
+                res("DC_rows_template.xml"), o);
+        assertTrue(r.danglingRefs.isEmpty(), "Expected no dangling refs when formula shift is 0: " + r.danglingRefs);
+        assertTrue(r.xml.contains("VALUE=\"[27]\""), "Expected unshifted [27] formula");
+        assertTrue(r.xml.contains("VALUE=\"-[34]\""), "Expected unshifted -[34] formula");
+        assertTrue(r.xml.contains("PercentOfTotal([A],[A,1])"), "Expected unshifted PercentOfTotal([A],[A,1])");
     }
 }

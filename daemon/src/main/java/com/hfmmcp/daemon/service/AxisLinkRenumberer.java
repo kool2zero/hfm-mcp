@@ -67,6 +67,7 @@ final class AxisLinkRenumberer {
         boolean strictRefs = false;
         boolean studioResave = true;          // R7
         boolean numericHeadingCol = true;
+        boolean studioInsertBeforeDeleteShift = false;
     }
 
     static final class Result {
@@ -339,7 +340,7 @@ final class AxisLinkRenumberer {
         int refsShifted = 0;
         NodeList des = grid.getElementsByTagName("DERIVEDEXPRESSION");
         List<Integer> originalTargets = new ArrayList<>();
-        int formulaShift = o.position == 0 ? tSegs : (tSegs - dropSegs.size());
+        int formulaShift = o.studioInsertBeforeDeleteShift ? tSegs : (tSegs - dropSegs.size());
         for (int i = 0; i < des.getLength(); i++) {
             Element d = (Element) des.item(i);
             String v = d.getAttribute("VALUE");
@@ -427,13 +428,15 @@ final class AxisLinkRenumberer {
 
         // ---- self-checks
         Result res = new Result();
-        runChecks(res, grid, n, tSegs, originalTargets, newRowOf.keySet(), o.strictRefs);
+        int totalRuntimeSegments = tSegs + (segs.size() - dropSegs.size());
+        runChecks(res, grid, n, formulaShift, totalRuntimeSegments, o.position, originalTargets,
+                newRowOf.keySet(), o.strictRefs, o.studioInsertBeforeDeleteShift);
         for (String d : res.danglingRefs) {
             res.notes.add("Dangling formula reference: " + d);
         }
         res.notes.add("Row axis now links to " + o.templateName + ": " + dropSegs.size() + " segment(s) removed, "
                 + (segs.size() - dropSegs.size()) + " kept; " + n + " own rows (ROW_COUNT), template adds "
-                + tSegs + " segments; " + refsShifted + " row reference(s) shifted by " + tSegs + "; "
+                + tSegs + " segments; " + refsShifted + " row reference(s) shifted by " + formulaShift + "; "
                 + smap.size() + " cell styles and " + cmap.size() + " conditional formats retained.");
         res.xml = serialize(doc);
         return res;
@@ -466,8 +469,10 @@ final class AxisLinkRenumberer {
 
     // ------------------------------------------------------------------ self-checks
 
-    private static void runChecks(Result res, Element grid, int n, int shift, List<Integer> originalTargets,
-                                  Set<Integer> keptOriginalRows, boolean strictRefs) {
+    private static void runChecks(Result res, Element grid, int n, int formulaShift, int totalRuntimeSegments,
+                                  int position, List<Integer> originalTargets,
+                                  Set<Integer> keptOriginalRows, boolean strictRefs,
+                                  boolean studioInsertBeforeDeleteShift) {
         List<String> failures = new ArrayList<>();
         // 1 ROW_PROP / STYLE_IDX counts
         int rpN = children(grid, "ROW_PROP").size();
@@ -524,16 +529,25 @@ final class AxisLinkRenumberer {
         add(res, failures, "cond_format_indexes_contiguous", cfContig && stContig && links,
                 "COND_FORMAT=" + cfN + " contiguous=" + cfContig + ", CELL_STYLE=" + stN + " contiguous=" + stContig
                         + ", links valid=" + links);
-        // 4 formula references. Studio itself leaves references shifted by the template size, so a
-        // target past the combined row count (or on a dropped row) is reported; it fails the call only
-        // with strict_refs.
-        int combined = shift + n;
+        // 4 formula references. At runtime FR expands the linked template at POSITION before
+        // evaluating DERIVEDEXPRESSION formulas, so 1-based [row] references resolve against the
+        // expanded segment count (totalRuntimeSegments). When studioInsertBeforeDeleteShift is
+        // enabled, Studio's insert-before-delete shift (+tSegs) is checked against keptOriginalRows.
+        int combined = formulaShift + n;
         for (Integer t : originalTargets) {
+            int shift = (t < position) ? 0 : formulaShift;
             int now = t + shift;
-            if (!keptOriginalRows.contains(t)) {
-                res.danglingRefs.add("original row " + t + " (now [" + now + "]) was dropped");
-            } else if (now >= combined) {
-                res.danglingRefs.add("[" + now + "] is past the combined row count " + combined);
+            if (studioInsertBeforeDeleteShift) {
+                if (!keptOriginalRows.contains(t)) {
+                    res.danglingRefs.add("original row " + t + " (now [" + now + "]) was dropped");
+                } else if (now >= combined) {
+                    res.danglingRefs.add("[" + now + "] is past the combined row count " + combined);
+                }
+            } else {
+                if (now < 1 || now > totalRuntimeSegments) {
+                    res.danglingRefs.add("[" + now + "] is outside the expanded runtime row range 1.."
+                            + totalRuntimeSegments);
+                }
             }
         }
         boolean refsOk = res.danglingRefs.isEmpty();

@@ -83,7 +83,47 @@ read the journal back with hfm_get_journal and tell the user what HFM stored.
 Report changes (hfm_preview_report_save to create or update a report's definition code or metadata)
 also follow preview -> confirm -> hfm_execute_action. Read the existing report first with
 hfm_get_report before updating it, show the user the code/metadata changes, and wait for their
-explicit confirmation before calling hfm_execute_action.
+explicit confirmation before calling hfm_execute_action. Prefer `replacements` when editing existing
+FR_REPORT or FR_ROW_COLUMN XML so you do not have to send large 50KB+ XML payloads, and prefer
+`book_edits` (`move`, `remove`, `add`, `swap_report`, `set_member_selection`) when modifying FR_BOOK
+definitions so BOOK_POV REF_COUNTs and chapters stay valid.
+
+Financial Reporting Row & Column Templates (FR_ROW_COLUMN, .ros) & Axis Linking (FR_REPORT, .des):
+- FR_ROW_COLUMN (.ros) root tag:
+  `<SEGMENTSET DATASOURCE_ID="..." DESCRIPTION="" NAME="/Folder/Name" SAVED_PROPS="0000" SAVE_AXIS="2" VERSION="2.5">`.
+- `SAVED_PROPS` & `<SEGMENT_PROP>`:
+  - `HIDE_ALWAYS="1"` on `<SEGMENT_PROP SEGMENT="i"/>` is always honored per segment.
+  - With `SAVED_PROPS="0000"`, FR ignores `HEIGHT` and `SUPPRESSION` on `<SEGMENT_PROP>` and instead
+    inherits Row Height and Suppression for all linked rows from the report's `FORMAT_SEGMENT`
+    ("Inherit from") row.
+  - When a template has per-row `SUPPRESSION` (`"-1"` If Missing, `"-2"` If Zero, `"-3"` If Zero or
+    Missing) or custom row `HEIGHT`s that differ from `FORMAT_SEGMENT`, set `SAVED_PROPS="1111"` on
+    the `.ros` `<SEGMENTSET>` and include `HEIGHT` and `SUPPRESSION` on each `<SEGMENT_PROP>`.
+- `<STYLE_IDX>` & `<CELL_STYLE>` in `.ros`:
+  - A `.ros` Row Template only stores 1 style index per row-heading layer plus 1 data cell style
+    index (`COL_IDX="h0,d"` for 1 heading layer, `COL_IDX="h0,h1,d"` for 2 heading layers); FR
+    ignores additional column indices in `.ros`.
+  - When a Row Template is linked into a grid whose columns are inline (not a linked Column
+    Template), FR applies the Row Template's data `<CELL_STYLE>` across all columns of the linked
+    rows (`Precedence For: Row Template / Column Template` only activates when both rows and columns
+    are linked templates).
+- `<GRIDSEGMENT>` & formulas inside `.ros`:
+  - Standard metadata `<GRIDSEGMENT>`s in `.ros` omit `ID="..."` (keep `ID` only on `SEGMENT_TYPE="1"`
+    formula rows and `SEGMENT_TYPE="2"` text rows) and must preserve `HEADING="..."` and `HEADTYPE`
+    on `<METADATAEXPRESSION>` and `<DERIVEDEXPRESSION>`.
+  - 1-based `[row]` references inside `<DERIVEDEXPRESSION>` in a `.ros` template are relative to the
+    template (`1 .. tSegs`). When extracting rows starting at 0-based `POSITION="P"` from an
+    unlinked report, shift `[row]` references inside the extracted template segments by `-P`
+    (`[row - P]`), because FR adds `+P` at runtime when the template is linked at `POSITION="P"`.
+- Linking `<SEGMENTSET>` in `FR_REPORT` (.des):
+  - When replacing `tSegs` inline rows at 0-based `POSITION="P"` with a `tSegs`-segment linked
+    `<SEGMENTSET AXIS="2" FORMAT_PRECEDENCE="1" FORMAT_SEGMENT="..." FORMULA_PRECEDENCE="1" OBJECT_LINKNAME="/Folder/Template" POSITION="P"/>`:
+    - `FORMAT_SEGMENT` (0-based segment index of the "Inherit from" row) defaults to `P - 1` when
+      `P > 0` (the row immediately preceding the link) and `tSegs` when `P == 0`.
+    - Do NOT shift 1-based `[row]` or `[Col,row]` references in the `.des` report's own
+      `<DERIVEDEXPRESSION>` formulas when `tSegs` equals the number of dropped inline segments
+      (shift = `tSegs - droppedSegments = 0`), because FR expands `<SEGMENTSET>` at runtime before
+      evaluating report formulas.
 """
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
@@ -496,24 +536,25 @@ def build_server(client: DaemonClient, enable_actions: bool = False,
         axis_links: Annotated[list[dict[str, str]] | None,
                               Field(description="Replace a grid axis with a live link to a row/column template. "
                                                 "Item keys: 'axis', 'template' (e.g. '/Users/test'), "
-                                                "'keep_segment_ids' ('34,52,7'), optional 'format_segment', "
-                                                "'position', 'axisId' (default Row=2, Column=1). "
-                                                "EXPERIMENTAL. Default mode only swaps segments and is refused "
+                                                "'keep_segment_ids' ('34,52,7'), optional 'format_segment' "
+                                                "(defaults to position - 1 when position > 0, else template segment count), "
+                                                "'position' (0-based insertion index, default 0), 'axisId' (default Row=2, Column=1). "
+                                                "Default mode only swaps segments and is refused "
                                                 "unless 'allow_unrenumbered': 'true' (do not save that result). "
-                                                "With 'renumber': 'true' (Row axis, POSITION 0 only; Column is "
+                                                "With 'renumber': 'true' (Row axis, any POSITION >= 0; Column is "
                                                 "refused) the daemon fetches the FR_ROW_COLUMN template and "
                                                 "reproduces what Studio saves: ROW_COUNT, ROW_PROP/STYLE_IDX, "
                                                 "cell styles and conditional formats, GRIDCELL rows and "
-                                                "formula row references (+ template segment count). Extra keys: "
+                                                "formula row references (shifted by templateSegs - droppedSegs, i.e. 0 for a 1:1 replacement, "
+                                                "unless 'studio_shift_formulas': 'true' is set). Extra keys: "
                                                 "'segment_rows' ('ID:rows,...', needed when a segment renders "
                                                 "several rows so rows add up to ROW_COUNT), 'studio_head_rows' "
                                                 "(default 0; Studio kept the first N original row "
-                                                "properties in the one verified example, N=3, reason unknown), "
+                                                "properties in the POSITION=0/5 examples, N=3), "
                                                 "'strict_refs': 'true' (fail instead of warn on formula "
-                                                "references to dropped/missing rows), 'studio_resave': 'false' "
+                                                "references outside the expanded runtime row count), 'studio_resave': 'false' "
                                                 "(skip EXPAND_PLACEMENT/GetHeading normalisation). Self-checks "
-                                                "are returned as axisLinkChecks in the plan. Verified against "
-                                                "ONE Studio pair only; review the preview before saving.")] = None,
+                                                "are returned as axisLinkChecks in the plan.")] = None,
         book_edits: Annotated[list[dict[str, Any]] | None,
                               Field(description="Optional structured edits for FR_BOOK (<BOOK>) definitions. "
                                                 "Each item has an 'action': "

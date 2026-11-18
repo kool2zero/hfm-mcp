@@ -1664,6 +1664,8 @@ public final class ReportService {
         o.strictRefs = strict != null && "true".equalsIgnoreCase(strict.trim());
         String resave = firstNonNullKey(l, "studio_resave", "studioResave");
         o.studioResave = resave == null || !"false".equalsIgnoreCase(resave.trim());
+        String studioShift = firstNonNullKey(l, "studio_shift_formulas", "studioShiftFormulas");
+        o.studioInsertBeforeDeleteShift = studioShift != null && "true".equalsIgnoreCase(studioShift.trim());
         AxisLinkRenumberer.Result r = AxisLinkRenumberer.link(xml, t.code, o);
         notes.addAll(r.notes);
         checks.addAll(r.checks);
